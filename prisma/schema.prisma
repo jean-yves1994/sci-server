@@ -1,0 +1,842 @@
+// Smart Collateral Inspection (SCI) — data model
+//
+// Design notes that matter in a financial-sector system:
+//  - Every business entity is scoped to an organization (the institution).
+//  - Nothing operational is hard-deleted; deletedAt preserves the record.
+//  - Inspection content is snapshotted per submission so a reviewer's decision
+//    can always be traced to the exact data they saw.
+//  - Photos and PDFs live in object storage; only metadata is stored here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum UserStatus {
+  PENDING_ACTIVATION
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum BranchScope {
+  OWN_BRANCH
+  ALL_BRANCHES
+}
+
+/// Controlled lifecycle. Transitions are enforced only by the state machine in
+/// src/inspections/domain/inspection-state-machine.ts, never ad hoc.
+enum InspectionStatus {
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+  UNDER_REVIEW
+  CORRECTION_REQUESTED
+  RESUBMITTED
+  APPROVED
+  REJECTED
+  REPORT_GENERATED
+  ARCHIVED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ConditionStatus {
+  CRITICAL
+  POOR
+  FAIR
+  GOOD
+  EXCELLENT
+}
+
+enum OccupancyStatus {
+  OWNER_OCCUPIED
+  TENANT_OCCUPIED
+  VACANT
+  PARTIALLY_OCCUPIED
+  UNDER_CONSTRUCTION
+}
+
+enum OwnershipType {
+  FREEHOLD
+  LEASEHOLD
+  CUSTOMARY
+  CO_OWNERSHIP
+  COMPANY_OWNED
+}
+
+enum PhotoCategory {
+  FRONT_VIEW
+  REAR_VIEW
+  LEFT_SIDE
+  RIGHT_SIDE
+  INTERIOR
+  ROOF
+  FOUNDATION
+  ROAD_ACCESS
+  UTILITIES
+  SURROUNDINGS
+  DOCUMENT
+  OTHER
+}
+
+enum LocationSource {
+  GPS
+  NETWORK
+  FUSED
+  MANUAL
+}
+
+enum CommentType {
+  REVIEWER_NOTE
+  CORRECTION_REQUEST
+  REJECTION_REASON
+  APPROVAL_NOTE
+  INSPECTOR_RESPONSE
+}
+
+enum NotificationType {
+  ASSIGNMENT_CREATED
+  ASSIGNMENT_CHANGED
+  INSPECTION_SUBMITTED
+  INSPECTION_APPROVED
+  INSPECTION_REJECTED
+  CORRECTION_REQUESTED
+  REPORT_READY
+  SYSTEM_ALERT
+}
+
+enum FieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  CURRENCY
+  DATE
+  SELECT
+  MULTI_SELECT
+  BOOLEAN
+  PHONE
+  EMAIL
+  NATIONAL_ID
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id             String       @id @default(uuid())
+  name           String
+  code           String       @unique
+  legalName      String?
+  taxId          String?
+  addressLine    String?
+  phone          String?
+  email          String?
+  logoStorageKey String?
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  branches    Branch[]
+  users       User[]
+  roles       Role[]
+  properties  Property[]
+  inspections Inspection[]
+  templates   InspectionTemplate[]
+  reports     Report[]
+  auditLogs   AuditLog[]
+  divisions   AdministrativeDivision[]
+
+  @@map("organizations")
+}
+
+/// Configurable administrative hierarchy (Province > District > Sector > Cell >
+/// Village in Rwanda). A self-referencing tree rather than fixed columns, so a
+/// different country's hierarchy needs no schema change or mobile release.
+model AdministrativeDivision {
+  id             String   @id @default(uuid())
+  organizationId String
+  parentId       String?
+  level          Int
+  name           String
+  code           String?
+  createdAt      DateTime @default(now())
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       AdministrativeDivision?  @relation("DivisionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     AdministrativeDivision[] @relation("DivisionTree")
+
+  properties Property[]
+  branches   Branch[]
+
+  @@index([organizationId, level])
+  @@index([parentId])
+  @@map("administrative_divisions")
+}
+
+model Branch {
+  id             String       @id @default(uuid())
+  organizationId String
+  code           String
+  name           String
+  addressLine    String?
+  divisionId     String?
+  phone          String?
+  email          String?
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  division     AdministrativeDivision? @relation(fields: [divisionId], references: [id], onDelete: SetNull)
+
+  users       User[]
+  properties  Property[]
+  inspections Inspection[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("branches")
+}
+
+// ---------------------------------------------------------------------------
+// Identity and access
+// ---------------------------------------------------------------------------
+
+model Permission {
+  id          String @id @default(uuid())
+  code        String @unique
+  category    String
+  description String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model Role {
+  id             String   @id @default(uuid())
+  organizationId String
+  code           String
+  name           String
+  description    String?
+  isSystem       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@unique([organizationId, code])
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id                  String      @id @default(uuid())
+  organizationId      String
+  branchId            String?
+  email               String      @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  phone               String?
+  employeeNumber      String?
+  status              UserStatus  @default(PENDING_ACTIVATION)
+  branchScope         BranchScope @default(OWN_BRANCH)
+  failedLoginAttempts Int         @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  mustChangePassword  Boolean     @default(false)
+  passwordChangedAt   DateTime?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  deletedAt           DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  userRoles      UserRole[]
+  sessions       Session[]
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordReset[]
+  deviceTokens   DeviceToken[]
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+
+  inspectionsAssigned  Inspection[]            @relation("InspectionInspector")
+  inspectionsReviewing Inspection[]            @relation("InspectionReviewer")
+  inspectionsCreated   Inspection[]            @relation("InspectionCreator")
+  comments             InspectionComment[]
+  statusEvents         InspectionStatusEvent[]
+  photosCaptured       InspectionPhoto[]
+  reportsGenerated     Report[]
+  correctionsRaised    CorrectionRequest[]
+
+  @@index([organizationId])
+  @@index([branchId])
+  @@index([status])
+  @@map("users")
+}
+
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  userAgent  String?
+  ipAddress  String?
+  deviceId   String?
+  platform   String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Refresh tokens rotate on every use. familyId groups a rotation chain, so
+/// replaying a spent token can revoke the whole chain — the standard defence
+/// against a stolen refresh token.
+model RefreshToken {
+  id            String    @id @default(uuid())
+  userId        String
+  sessionId     String
+  tokenHash     String    @unique
+  familyId      String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  revokedAt     DateTime?
+  revokedReason String?
+  createdAt     DateTime  @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_resets")
+}
+
+model DeviceToken {
+  id         String    @id @default(uuid())
+  userId     String
+  token      String    @unique
+  platform   String
+  deviceId   String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
+
+model InspectionTemplate {
+  id             String       @id @default(uuid())
+  organizationId String
+  code           String
+  name           String
+  description    String?
+  version        Int          @default(1)
+  isDefault      Boolean      @default(false)
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sections     TemplateSection[]
+  photoRules   TemplatePhotoRule[]
+  inspections  Inspection[]
+
+  @@unique([organizationId, code, version])
+  @@index([organizationId])
+  @@map("inspection_templates")
+}
+
+model TemplateSection {
+  id           String  @id @default(uuid())
+  templateId   String
+  code         String
+  name         String
+  /// Assessment sections render as rating cards; others render as forms.
+  isAssessment Boolean @default(false)
+  sortOrder    Int     @default(0)
+
+  template InspectionTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  fields   TemplateField[]
+
+  @@unique([templateId, code])
+  @@map("template_sections")
+}
+
+model TemplateField {
+  id        String    @id @default(uuid())
+  sectionId String
+  code      String
+  label     String
+  type      FieldType
+  required  Boolean   @default(false)
+  sortOrder Int       @default(0)
+  /// JSON array of {value,label} for SELECT / MULTI_SELECT.
+  options   Json?
+  /// JSON {min,max,minLength,maxLength,pattern}. Enforced server-side.
+  validation Json?
+  helpText   String?
+
+  section TemplateSection   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  values  InspectionValue[]
+
+  @@unique([sectionId, code])
+  @@map("template_fields")
+}
+
+/// Minimum photographic evidence required before submission.
+model TemplatePhotoRule {
+  id          String        @id @default(uuid())
+  templateId  String
+  category    PhotoCategory
+  minCount    Int           @default(1)
+  required    Boolean       @default(true)
+  description String?
+
+  template InspectionTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, category])
+  @@map("template_photo_rules")
+}
+
+// ---------------------------------------------------------------------------
+// Property and inspection
+// ---------------------------------------------------------------------------
+
+model Property {
+  id             String    @id @default(uuid())
+  organizationId String
+  branchId       String
+  reference      String
+  propertyType   String
+  addressLine    String
+  divisionId     String?
+  plotNumber     String?
+  titleNumber    String?
+  /// Registered coordinates, the reference point for proof-of-presence checks.
+  latitude       Decimal?  @db.Decimal(10, 7)
+  longitude      Decimal?  @db.Decimal(10, 7)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  division     AdministrativeDivision? @relation(fields: [divisionId], references: [id], onDelete: SetNull)
+  inspections  Inspection[]
+
+  @@unique([organizationId, reference])
+  @@index([organizationId])
+  @@index([branchId])
+  @@map("properties")
+}
+
+model Inspection {
+  id               String           @id @default(uuid())
+  organizationId   String
+  branchId         String
+  propertyId       String
+  templateId       String
+  inspectionNumber String
+  loanReference    String
+  clientName       String?
+  status           InspectionStatus @default(ASSIGNED)
+  priority         Priority         @default(NORMAL)
+
+  inspectorId String?
+  reviewerId  String?
+  createdById String
+
+  assignedAt  DateTime  @default(now())
+  dueDate     DateTime?
+  startedAt   DateTime?
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  approvedAt  DateTime?
+
+  assignmentNotes String?
+  /// Increments on each submission so review rounds stay distinguishable.
+  submissionCount Int     @default(0)
+
+  /// Optimistic concurrency token. A reviewer approving a stale version is
+  /// refused rather than silently overwriting a newer correction.
+  version Int @default(1)
+
+  /// Idempotency key from the mobile client, so a retried offline sync cannot
+  /// create a duplicate inspection.
+  clientRequestId String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  property     Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  template     InspectionTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  inspector    User?              @relation("InspectionInspector", fields: [inspectorId], references: [id], onDelete: SetNull)
+  reviewer     User?              @relation("InspectionReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  createdBy    User               @relation("InspectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  owner        InspectionOwner?
+  valuation    InspectionValuation?
+  locations    InspectionLocation[]
+  values       InspectionValue[]
+  assessments  InspectionAssessment[]
+  photos       InspectionPhoto[]
+  comments     InspectionComment[]
+  statusEvents InspectionStatusEvent[]
+  corrections  CorrectionRequest[]
+  reports      Report[]
+  snapshots    InspectionSnapshot[]
+
+  @@unique([organizationId, inspectionNumber])
+  @@unique([clientRequestId])
+  @@index([organizationId, status])
+  @@index([branchId, status])
+  @@index([inspectorId, status])
+  @@index([reviewerId, status])
+  @@index([submittedAt])
+  @@index([loanReference])
+  @@map("inspections")
+}
+
+/// Owner details sit on the inspection, not the property: ownership can change
+/// between inspections and each must record what was true at the time.
+model InspectionOwner {
+  id              String           @id @default(uuid())
+  inspectionId    String           @unique
+  fullName        String
+  /// Encrypted at rest; see common/utils/crypto.util.ts.
+  nationalIdEnc   String?
+  /// Keyed blind index, so an ID can be searched without decrypting.
+  nationalIdHash  String?
+  phone           String?
+  email           String?
+  occupancyStatus OccupancyStatus?
+  ownershipType   OwnershipType?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([nationalIdHash])
+  @@map("inspection_owners")
+}
+
+model InspectionValue {
+  id           String    @id @default(uuid())
+  inspectionId String
+  fieldId      String
+  valueText    String?
+  valueNumber  Decimal?  @db.Decimal(18, 2)
+  valueDate    DateTime?
+  valueBool    Boolean?
+  valueJson    Json?
+
+  inspection Inspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  field      TemplateField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@unique([inspectionId, fieldId])
+  @@index([inspectionId])
+  @@map("inspection_values")
+}
+
+model InspectionAssessment {
+  id           String           @id @default(uuid())
+  inspectionId String
+  categoryCode String
+  categoryName String
+  rating       Int?
+  condition    ConditionStatus?
+  notes        String?
+  sortOrder    Int              @default(0)
+  updatedAt    DateTime         @updatedAt
+
+  inspection Inspection        @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  photos     InspectionPhoto[]
+
+  @@unique([inspectionId, categoryCode])
+  @@index([inspectionId])
+  @@map("inspection_assessments")
+}
+
+model InspectionValuation {
+  id              String   @id @default(uuid())
+  inspectionId    String   @unique
+  currency        String   @default("RWF")
+  marketValue     Decimal? @db.Decimal(18, 2)
+  forcedSaleValue Decimal? @db.Decimal(18, 2)
+  replacementCost Decimal? @db.Decimal(18, 2)
+  rentalEstimate  Decimal? @db.Decimal(18, 2)
+  comments        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@map("inspection_valuations")
+}
+
+/// Every capture is kept, not just the latest, so a reviewer can see whether
+/// the inspector moved around the site or captured once from a distance.
+model InspectionLocation {
+  id           String         @id @default(uuid())
+  inspectionId String
+  latitude     Decimal        @db.Decimal(10, 7)
+  longitude    Decimal        @db.Decimal(10, 7)
+  accuracyM    Float?
+  altitudeM    Float?
+  source       LocationSource @default(GPS)
+  /// Recorded and surfaced to the reviewer, not used to block automatically.
+  isMocked     Boolean        @default(false)
+  capturedAt   DateTime
+  /// Computed server-side. Never accepted from a client, which could lie.
+  distanceFromPropertyM Int?
+  createdAt             DateTime @default(now())
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+  @@map("inspection_locations")
+}
+
+model InspectionPhoto {
+  id             String        @id @default(uuid())
+  inspectionId   String
+  assessmentId   String?
+  category       PhotoCategory
+  storageKey     String
+  thumbnailKey   String?
+  mimeType       String
+  sizeBytes      Int
+  width          Int?
+  height         Int?
+  checksumSha256 String
+  caption        String?
+
+  latitude   Decimal?  @db.Decimal(10, 7)
+  longitude  Decimal?  @db.Decimal(10, 7)
+  accuracyM  Float?
+  capturedAt DateTime?
+
+  capturedById    String
+  /// Idempotency key; prevents a retried upload creating a duplicate.
+  clientRequestId String?
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  inspection Inspection            @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  assessment InspectionAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  capturedBy User                  @relation(fields: [capturedById], references: [id], onDelete: Restrict)
+
+  @@unique([clientRequestId])
+  @@index([inspectionId, category])
+  @@map("inspection_photos")
+}
+
+model InspectionComment {
+  id           String      @id @default(uuid())
+  inspectionId String
+  authorId     String
+  type         CommentType @default(REVIEWER_NOTE)
+  body         String
+  createdAt    DateTime    @default(now())
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  author     User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+  @@map("inspection_comments")
+}
+
+/// Append-only lifecycle history: what the detail timeline renders and what an
+/// auditor reads to reconstruct who did what, when.
+model InspectionStatusEvent {
+  id              String            @id @default(uuid())
+  inspectionId    String
+  fromStatus      InspectionStatus?
+  toStatus        InspectionStatus
+  actorId         String?
+  comment         String?
+  submissionRound Int?
+  createdAt       DateTime          @default(now())
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  actor      User?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([inspectionId, createdAt])
+  @@map("inspection_status_events")
+}
+
+model CorrectionRequest {
+  id              String    @id @default(uuid())
+  inspectionId    String
+  requestedById   String
+  reason          String
+  /// Optional JSON array of section codes, so the app can highlight what to fix.
+  targetSections  Json?
+  submissionRound Int
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  inspection  Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  requestedBy User       @relation(fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@index([inspectionId])
+  @@map("correction_requests")
+}
+
+/// Immutable copy of the content at each submission, so a decision can always
+/// be traced to precisely the data the reviewer saw.
+model InspectionSnapshot {
+  id              String   @id @default(uuid())
+  inspectionId    String
+  submissionRound Int
+  payload         Json
+  createdAt       DateTime @default(now())
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@unique([inspectionId, submissionRound])
+  @@map("inspection_snapshots")
+}
+
+// ---------------------------------------------------------------------------
+// Reports, notifications, audit
+// ---------------------------------------------------------------------------
+
+model Report {
+  id             String   @id @default(uuid())
+  organizationId String
+  inspectionId   String
+  reportNumber   String
+  version        Int      @default(1)
+  storageKey     String
+  checksumSha256 String
+  sizeBytes      Int
+  generatedById  String
+  generatedAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inspection   Inspection   @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  generatedBy  User         @relation(fields: [generatedById], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, reportNumber, version])
+  @@index([inspectionId])
+  @@map("reports")
+}
+
+model Notification {
+  id         String           @id @default(uuid())
+  userId     String
+  type       NotificationType
+  title      String
+  message    String
+  entityType String?
+  entityId   String?
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+/// Append-only. There is deliberately no update or delete path in the service
+/// layer; an audit trail the application can edit is not an audit trail.
+model AuditLog {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String?
+  action         String
+  entityType     String
+  entityId       String?
+  previousValue  Json?
+  newValue       Json?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
