@@ -1,0 +1,51 @@
+# Render blueprint for the SCI backend.
+#
+# Import with: Render dashboard -> New -> Blueprint -> select this repository.
+services:
+  - type: web
+    name: sci-backend
+    runtime: node
+    # This is a monorepo; the backend is not at the repository root.
+    rootDir: backend
+    plan: starter
+    healthCheckPath: /api/v1/health
+
+    # Migrations run in the build, before the new instance takes traffic.
+    # `migrate deploy` applies pending migrations only — it never resets data
+    # and never prompts, which is what makes it safe unattended.
+    buildCommand: npm ci && npx prisma generate && npm run build && npx prisma migrate deploy
+    startCommand: node dist/main.js
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # PORT is injected by Render. Do not set it.
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL_DAYS
+        value: 7
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PUBLIC_API_URL
+        sync: false
+      # Render gives a web service a persistent disk only if one is attached.
+      # Without a disk, use blob storage; with one, 'local' is fine.
+      - key: STORAGE_DRIVER
+        value: local
+      - key: STORAGE_LOCAL_PATH
+        value: /var/data/storage
+      - key: MAX_UPLOAD_BYTES
+        value: "15728640"
+
+    # A persistent disk is what makes 'local' storage safe here: inspection
+    # photographs and generated PDFs survive restarts and redeploys.
+    disk:
+      name: sci-storage
+      mountPath: /var/data
+      sizeGB: 10
