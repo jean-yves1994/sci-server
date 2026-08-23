@@ -8,32 +8,34 @@ import { loadConfig } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-
-  // Validated before the application starts, so a missing secret or database
-  // URL fails here with a clear message rather than at the first login.
   const config = loadConfig();
 
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
+
+  // 1. Enable CORS BEFORE other middleware and routes
+  app.enableCors({
+    // Allow your specific frontend and localhost for development
+    origin: [
+      'https://sci-rwanda.vercel.app',
+      'http://localhost:3000', // Adjust if your local port differs
+    ],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+  });
 
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());
 
   app.use(
     helmet({
-      // Swagger UI needs inline styles; the API itself serves no HTML, so the
-      // remaining protections are what matter here.
       contentSecurityPolicy: config.nodeEnv === 'production' ? undefined : false,
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
 
-  app.enableCors({ origin: config.corsOrigins, credentials: true });
-
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      // Unknown properties are rejected rather than quietly dropped, so a
-      // client sending the wrong field name finds out immediately.
       forbidNonWhitelisted: true,
       transform: true,
       transformOptions: { enableImplicitConversion: false },
@@ -42,10 +44,7 @@ async function bootstrap(): Promise<void> {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Smart Collateral Inspection API')
-    .setDescription(
-      'Collateral inspection workflow for financial institutions: assignment, ' +
-        'offline field capture, supervisory review and official reporting.',
-    )
+    .setDescription('Collateral inspection workflow.')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
@@ -53,13 +52,10 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig));
 
   await app.listen(config.port);
-
-  logger.log(`API listening on http://localhost:${config.port}/api/v1`);
-  logger.log(`Documentation at http://localhost:${config.port}/api/docs`);
+  logger.log(`API listening on port ${config.port}`);
 }
 
 bootstrap().catch((error: unknown) => {
-  // eslint-disable-next-line no-console
   console.error('\nFailed to start the API:\n');
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
