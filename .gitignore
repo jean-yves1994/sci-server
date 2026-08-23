@@ -3,7 +3,15 @@ dist/
 .next/
 .env
 .env.local
-storage/
+/storage/
 *.log
 coverage/
 .verify/
+
+# The storage PROVIDER is source code, unlike the storage/ upload directory.
+# Negated explicitly so no future pattern can quietly exclude it again.
+!src/providers/storage/
+!backend/src/providers/storage/
+
+# Backups written by the fix scripts. Never source.
+*.bak
