@@ -24,7 +24,8 @@ export class LocalStorageProvider extends StorageProvider {
     super();
     this.root = resolve(this.config.get<string>('STORAGE_LOCAL_PATH') ?? './storage');
     this.signingSecret = this.config.get<string>('JWT_SECRET') ?? 'insecure-development-secret';
-    this.publicBaseUrl = this.config.get<string>('PUBLIC_API_URL') ?? 'http://localhost:4000/api/v1';
+    this.publicBaseUrl =
+      this.config.get<string>('PUBLIC_API_URL') ?? 'https://sci-server.vercel.app/api/v1';
   }
 
   /**

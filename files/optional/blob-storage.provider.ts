@@ -30,7 +30,8 @@ export class BlobStorageProvider extends StorageProvider {
     super();
     this.token = this.config.get<string>('BLOB_READ_WRITE_TOKEN') ?? '';
     this.signingSecret = this.config.get<string>('JWT_SECRET') ?? '';
-    this.publicBaseUrl = this.config.get<string>('PUBLIC_API_URL') ?? 'http://localhost:4000/api/v1';
+    this.publicBaseUrl =
+      this.config.get<string>('PUBLIC_API_URL') ?? 'https://sci-server.vercel.app/api/v1';
 
     if (!this.token) {
       // Failing loudly at boot beats discovering this on the first upload,
