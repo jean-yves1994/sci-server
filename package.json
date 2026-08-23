@@ -17,7 +17,9 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node -T prisma/seed.ts",
-    "db:reset": "prisma db push --force-reset && npm run db:seed"
+    "db:reset": "prisma db push --force-reset && npm run db:seed",
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma generate && nest build"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.0",
@@ -37,7 +39,8 @@
     "helmet": "7.2.0",
     "pdfkit": "0.15.2",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.1"
+    "rxjs": "7.8.1",
+    "prisma": "5.22.0"
   },
   "devDependencies": {
     "@nestjs/cli": "10.4.9",
@@ -55,7 +58,6 @@
     "eslint-config-prettier": "9.1.0",
     "jest": "29.7.0",
     "prettier": "3.4.2",
-    "prisma": "5.22.0",
     "ts-jest": "29.2.5",
     "ts-node": "10.9.2",
     "typescript": "5.6.3"
