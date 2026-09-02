@@ -17,9 +17,10 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node -T prisma/seed.ts",
+    "db:sync-permissions": "ts-node -T prisma/sync-permissions.ts",
     "db:reset": "prisma db push --force-reset && npm run db:seed",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && nest build"
+    "vercel-build": "prisma generate && prisma migrate deploy && npm run db:sync-permissions && nest build"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.0",
@@ -59,7 +60,6 @@
     "jest": "29.7.0",
     "prettier": "3.4.2",
     "ts-jest": "29.2.5",
-    "ts-node": "10.9.2",
     "typescript": "5.6.3"
   },
   "prisma": {
