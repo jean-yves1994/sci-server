@@ -4,7 +4,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { DomainError, ErrorCode } from '../common/errors/domain.exception';
+import { DomainError } from '../common/errors/domain.exception';
+import { ErrorCode } from '../common/errors/error-codes';
 import { PaypackClient } from './paypack.client';
 
 /** The standard inspection fee, in RWF. The server is the authority. */
@@ -47,7 +48,7 @@ export class PaymentsService {
     // authenticated user could trigger a charge against any borrower.
     if (inspection.inspectorId !== actor.userId) {
       throw new DomainError(
-        ErrorCode.FORBIDDEN,
+        ErrorCode.AUTH_FORBIDDEN,
         'Only the assigned inspector can request the inspection fee.',
         403,
       );
