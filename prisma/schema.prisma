@@ -33,8 +33,6 @@ enum BranchScope {
   ALL_BRANCHES
 }
 
-/// Controlled lifecycle. Transitions are enforced only by the state machine in
-/// src/inspections/domain/inspection-state-machine.ts, never ad hoc.
 enum InspectionStatus {
   ASSIGNED
   IN_PROGRESS
@@ -134,10 +132,6 @@ enum FieldType {
   NATIONAL_ID
 }
 
-// ---------------------------------------------------------------------------
-// Tenancy
-// ---------------------------------------------------------------------------
-
 model Organization {
   id             String       @id @default(uuid())
   name           String
@@ -165,9 +159,6 @@ model Organization {
   @@map("organizations")
 }
 
-/// Configurable administrative hierarchy (Province > District > Sector > Cell >
-/// Village in Rwanda). A self-referencing tree rather than fixed columns, so a
-/// different country's hierarchy needs no schema change or mobile release.
 model AdministrativeDivision {
   id             String   @id @default(uuid())
   organizationId String
@@ -214,10 +205,6 @@ model Branch {
   @@index([organizationId])
   @@map("branches")
 }
-
-// ---------------------------------------------------------------------------
-// Identity and access
-// ---------------------------------------------------------------------------
 
 model Permission {
   id          String @id @default(uuid())
@@ -339,9 +326,6 @@ model Session {
   @@map("sessions")
 }
 
-/// Refresh tokens rotate on every use. familyId groups a rotation chain, so
-/// replaying a spent token can revoke the whole chain — the standard defence
-/// against a stolen refresh token.
 model RefreshToken {
   id            String    @id @default(uuid())
   userId        String
@@ -392,10 +376,6 @@ model DeviceToken {
   @@map("device_tokens")
 }
 
-// ---------------------------------------------------------------------------
-// Templates
-// ---------------------------------------------------------------------------
-
 model InspectionTemplate {
   id             String       @id @default(uuid())
   organizationId String
@@ -423,7 +403,6 @@ model TemplateSection {
   templateId   String
   code         String
   name         String
-  /// Assessment sections render as rating cards; others render as forms.
   isAssessment Boolean @default(false)
   sortOrder    Int     @default(0)
 
@@ -442,9 +421,7 @@ model TemplateField {
   type       FieldType
   required   Boolean   @default(false)
   sortOrder  Int       @default(0)
-  /// JSON array of {value,label} for SELECT / MULTI_SELECT.
   options    Json?
-  /// JSON {min,max,minLength,maxLength,pattern}. Enforced server-side.
   validation Json?
   helpText   String?
 
@@ -455,7 +432,6 @@ model TemplateField {
   @@map("template_fields")
 }
 
-/// Minimum photographic evidence required before submission.
 model TemplatePhotoRule {
   id          String        @id @default(uuid())
   templateId  String
@@ -470,21 +446,28 @@ model TemplatePhotoRule {
   @@map("template_photo_rules")
 }
 
-// ---------------------------------------------------------------------------
-// Property and inspection
-// ---------------------------------------------------------------------------
-
+// Basic property registration. Detailed collateral information belongs to the
+// inspection and is intentionally not required when creating a property.
 model Property {
   id             String    @id @default(uuid())
   organizationId String
   branchId       String
   reference      String
+  name           String?
   propertyType   String
-  addressLine    String
+  ownerClientName String?
+  province       String?
+  district       String?
+  sector         String?
+  cell           String?
+  villageStreet  String?
+
+  // Legacy fields retained so existing records remain readable. New property
+  // creation no longer collects these values.
+  addressLine    String?
   divisionId     String?
   plotNumber     String?
   titleNumber    String?
-  /// Registered coordinates, the reference point for proof-of-presence checks.
   latitude       Decimal?  @db.Decimal(10, 7)
   longitude      Decimal?  @db.Decimal(10, 7)
   createdAt      DateTime  @default(now())
@@ -499,6 +482,7 @@ model Property {
   @@unique([organizationId, reference])
   @@index([organizationId])
   @@index([branchId])
+  @@index([ownerClientName])
   @@map("properties")
 }
 
@@ -526,16 +510,8 @@ model Inspection {
   approvedAt  DateTime?
 
   assignmentNotes String?
-
-  /// Increments on each submission so review rounds stay distinguishable.
   submissionCount Int @default(0)
-
-  /// Optimistic concurrency token. A reviewer approving a stale version is
-  /// refused rather than silently overwriting a newer correction.
   version Int @default(1)
-
-  /// Idempotency key from the mobile client, so a retried offline sync cannot
-  /// create a duplicate inspection.
   clientRequestId String?
 
   createdAt DateTime  @default(now())
@@ -574,15 +550,11 @@ model Inspection {
   @@map("inspections")
 }
 
-/// Owner details sit on the inspection, not the property: ownership can change
-/// between inspections and each must record what was true at the time.
 model InspectionOwner {
   id              String           @id @default(uuid())
   inspectionId    String           @unique
   fullName        String
-  /// Encrypted at rest; see common/utils/crypto.util.ts.
   nationalIdEnc   String?
-  /// Keyed blind index, so an ID can be searched without decrypting.
   nationalIdHash  String?
   phone           String?
   email           String?
@@ -651,8 +623,6 @@ model InspectionValuation {
   @@map("inspection_valuations")
 }
 
-/// Every capture is kept, not just the latest, so a reviewer can see whether
-/// the inspector moved around the site or captured once from a distance.
 model InspectionLocation {
   id                    String         @id @default(uuid())
   inspectionId          String
@@ -661,10 +631,8 @@ model InspectionLocation {
   accuracyM             Float?
   altitudeM             Float?
   source                LocationSource @default(GPS)
-  /// Recorded and surfaced to the reviewer, not used to block automatically.
   isMocked              Boolean        @default(false)
   capturedAt            DateTime
-  /// Computed server-side. Never accepted from a client, which could lie.
   distanceFromPropertyM Int?
   createdAt             DateTime       @default(now())
 
@@ -687,17 +655,14 @@ model InspectionPhoto {
   height         Int?
   checksumSha256 String
   caption        String?
-
-  latitude   Decimal?  @db.Decimal(10, 7)
-  longitude  Decimal?  @db.Decimal(10, 7)
-  accuracyM  Float?
-  capturedAt DateTime?
-
-  capturedById    String
-  /// Idempotency key; prevents a retried upload creating a duplicate.
+  latitude       Decimal?      @db.Decimal(10, 7)
+  longitude      Decimal?      @db.Decimal(10, 7)
+  accuracyM      Float?
+  capturedAt     DateTime?
+  capturedById   String
   clientRequestId String?
-  createdAt       DateTime  @default(now())
-  deletedAt       DateTime?
+  createdAt      DateTime      @default(now())
+  deletedAt      DateTime?
 
   inspection Inspection            @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
   assessment InspectionAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
@@ -723,8 +688,6 @@ model InspectionComment {
   @@map("inspection_comments")
 }
 
-/// Append-only lifecycle history: what the detail timeline renders and what an
-/// auditor reads to reconstruct who did what, when.
 model InspectionStatusEvent {
   id              String            @id @default(uuid())
   inspectionId    String
@@ -747,7 +710,6 @@ model CorrectionRequest {
   inspectionId    String
   requestedById   String
   reason          String
-  /// Optional JSON array of section codes, so the app can highlight what to fix.
   targetSections  Json?
   submissionRound Int
   resolvedAt      DateTime?
@@ -760,8 +722,6 @@ model CorrectionRequest {
   @@map("correction_requests")
 }
 
-/// Immutable copy of the content at each submission, so a decision can always
-/// be traced to precisely the data the reviewer saw.
 model InspectionSnapshot {
   id              String   @id @default(uuid())
   inspectionId    String
@@ -774,10 +734,6 @@ model InspectionSnapshot {
   @@unique([inspectionId, submissionRound])
   @@map("inspection_snapshots")
 }
-
-// ---------------------------------------------------------------------------
-// Reports, notifications, audit
-// ---------------------------------------------------------------------------
 
 model Report {
   id             String   @id @default(uuid())
@@ -818,8 +774,6 @@ model Notification {
   @@map("notifications")
 }
 
-/// Append-only. There is deliberately no update or delete path in the service
-/// layer; an audit trail the application can edit is not an audit trail.
 model AuditLog {
   id             String   @id @default(uuid())
   organizationId String
@@ -844,44 +798,24 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// ---------------------------------------------------------------------------
-// Inspection Fees
-// ---------------------------------------------------------------------------
-
 enum FeeStatus {
   PENDING
   SUCCESSFUL
   FAILED
 }
 
-/// The inspection fee charged to the borrower.
-///
-/// One row per inspection, enforced by the unique constraint. That constraint
-/// is the real protection against double-charging: an idempotency key handles
-/// a retried HTTP request, but a unique index handles two requests arriving
-/// concurrently from two devices, which no application-level check can.
 model InspectionFee {
   id           String     @id @default(uuid())
   inspectionId String     @unique
   inspection   Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
-
   amount   Int    @default(15000)
   currency String @default("RWF")
-
-  /// The client's number. Stored so the audit trail records who was asked,
-  /// not merely that someone was.
   phoneNumber String
-
   status FeeStatus @default(PENDING)
-
-  /// Paypack's transaction reference, used for reconciliation.
   providerRef String? @unique
-
   failureReason String?
-
   requestedById String
   requestedBy   User   @relation("FeeRequestedBy", fields: [requestedById], references: [id])
-
   requestedAt DateTime  @default(now())
   settledAt   DateTime?
 
