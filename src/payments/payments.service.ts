@@ -104,6 +104,7 @@ export class PaymentsService {
     });
 
     await this.audit.record({
+      organizationId: actor.organizationId,
       action: 'INSPECTION_FEE_REQUESTED',
       entityType: 'InspectionFee',
       entityId: fee.id,
@@ -165,7 +166,14 @@ export class PaymentsService {
   async settle(providerRef: string, status: string) {
     const fee = await this.prisma.inspectionFee.findUnique({
       where: { providerRef },
-      include: { inspection: { select: { inspectionNumber: true } } },
+      include: {
+        inspection: {
+          select: {
+            inspectionNumber: true,
+            organizationId: true,
+          },
+        },
+      },
     });
 
     if (!fee) {
@@ -190,6 +198,7 @@ export class PaymentsService {
     });
 
     await this.audit.record({
+      organizationId: fee.inspection.organizationId,
       action: settled ? 'INSPECTION_FEE_PAID' : 'INSPECTION_FEE_FAILED',
       entityType: 'InspectionFee',
       entityId: fee.id,
