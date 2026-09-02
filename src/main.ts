@@ -12,23 +12,24 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
 
-  // 1. Enable CORS BEFORE other middleware and routes
+  // 1. Enable CORS with dynamic origin reflection
+  // This allows any origin (Web, Mobile, Localhost) while supporting cookies/credentials
   app.enableCors({
-    // Allow your specific frontend and localhost for development
-    origin: [
-      'https://sci-rwanda.vercel.app',
-      'http://localhost:3000', // Adjust if your local port differs
-    ],
+    origin: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
+    allowedHeaders: 'Content-Type, Authorization, Accept, X-Requested-With',
   });
 
   app.setGlobalPrefix('api/v1');
   app.use(cookieParser());
 
+  // 2. Configure Helmet
   app.use(
     helmet({
+      // Disable CSP in development for easier debugging; enable in production
       contentSecurityPolicy: config.nodeEnv === 'production' ? undefined : false,
+      // CRITICAL: Set to 'cross-origin' so external sites can load your resources
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
