@@ -76,16 +76,17 @@ async function main(): Promise<void> {
       return id;
     });
 
-    // Make system role grants exactly match DEFAULT_ROLES. This also repairs
-    // existing production databases where a permission was added in code but
-    // the corresponding rolePermission row was never seeded.
-    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
-    await prisma.rolePermission.createMany({
-      data: permissionIds.map((permissionId) => ({
-        roleId: role.id,
-        permissionId,
-      })),
-      skipDuplicates: true,
+    // Synchronize each system role atomically so a deployment never leaves a
+    // role half-populated if the process fails between delete and create.
+    await prisma.$transaction(async (tx) => {
+      await tx.rolePermission.deleteMany({ where: { roleId: role.id } });
+      await tx.rolePermission.createMany({
+        data: permissionIds.map((permissionId) => ({
+          roleId: role.id,
+          permissionId,
+        })),
+        skipDuplicates: true,
+      });
     });
 
     console.log(`  ${role.code}: ${permissionIds.length} permissions synchronized`);
