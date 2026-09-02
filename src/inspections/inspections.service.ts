@@ -77,8 +77,6 @@ export class InspectionsService {
             },
           }
         : {}),
-      // Search runs in the database, not the browser. Filtering thousands of
-      // records client-side would be both slow and a data-exposure problem.
       ...(query.search
         ? {
             OR: [
@@ -101,8 +99,6 @@ export class InspectionsService {
         orderBy,
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
-        // Selected explicitly: a list view has no need for photos, values or
-        // snapshots, and loading them would be an N+1 waiting to happen.
         select: {
           id: true,
           inspectionNumber: true,
@@ -130,14 +126,11 @@ export class InspectionsService {
     return paginate(rows, total, query.page, query.pageSize);
   }
 
-  /** The reviewer's queue: everything awaiting a decision, oldest submission first. */
   reviewQueue(user: TenantContext, query: InspectionQueryDto): Promise<PaginatedResult<unknown>> {
     return this.list(user, {
       ...query,
       status: query.status?.length ? query.status : REVIEW_QUEUE_STATUSES,
       sortBy: query.sortBy ?? 'submittedAt',
-      // Oldest first so the queue drains fairly rather than leaving early
-      // submissions stranded behind newer ones.
       sortDir: query.sortDir ?? 'asc',
     });
   }
@@ -197,8 +190,6 @@ export class InspectionsService {
       );
     }
 
-    // Proximity is derived on read rather than stored as a verdict, so changing
-    // the tolerance policy does not require rewriting historical rows.
     const latest = inspection.locations[0];
     const proximity = latest
       ? assessProximity(
@@ -220,7 +211,6 @@ export class InspectionsService {
     };
   }
 
-  /** The §17 review summary, used by both the app and the submit guard. */
   async completeness(user: TenantContext, id: string): Promise<CompletenessResult> {
     const inspection = await this.loadForCompleteness(user.organizationId, id);
     if (!inspection) {
@@ -270,8 +260,8 @@ export class InspectionsService {
     // the inspection must belong to the creator so the state machine can allow
     // the creator to start it. Users who can assign retain the existing ability
     // to create an unassigned inspection or choose a valid inspector.
-    const canAssign = user.permissions.includes('inspections.assign');
-    const isInspectorCreator = !canAssign && user.permissions.includes('inspections.write');
+    const canAssign = user.permissions.has('inspections.assign');
+    const isInspectorCreator = !canAssign && user.permissions.has('inspections.write');
 
     if (isInspectorCreator && dto.inspectorId && dto.inspectorId !== user.userId) {
       throw new ForbiddenError(
@@ -308,8 +298,6 @@ export class InspectionsService {
         },
       });
 
-      // The assessment rows are materialised now, from the template, so the
-      // inspector opens a ready checklist and every inspection is comparable.
       const assessmentSections = await tx.templateSection.findMany({
         where: { templateId: template.id, isAssessment: true },
         orderBy: { sortOrder: 'asc' },
@@ -430,8 +418,6 @@ export class InspectionsService {
         tx,
       );
 
-      // The previous inspector is told too; silently removing work from
-      // somebody's queue is how duplicated effort happens.
       if (isReassignment && inspection.inspectorId) {
         await this.notifications.create(
           {
@@ -519,8 +505,6 @@ export class InspectionsService {
 
     await this.prisma.runInTransaction(async (tx) => {
       for (const entry of dto.values) {
-        // Confirms the field belongs to this inspection's template, so a client
-        // cannot write values against an unrelated template's fields.
         const field = await tx.templateField.findFirst({
           where: { id: entry.fieldId, section: { templateId: inspection.templateId } },
           select: { id: true },
@@ -583,9 +567,6 @@ export class InspectionsService {
     await this.assertEditable(user, id, dto.baseVersion);
 
     const secret = process.env.JWT_SECRET ?? '';
-
-    // The national ID is encrypted before it reaches the database, and indexed
-    // through a keyed HMAC so it stays searchable without being readable.
     const nationalIdEnc = dto.nationalId ? encryptField(dto.nationalId.trim(), secret) : null;
     const nationalIdHash = dto.nationalId ? blindIndex(dto.nationalId, secret) : null;
 
@@ -614,7 +595,6 @@ export class InspectionsService {
           action: 'INSPECTION_OWNER_RECORDED',
           entityType: 'Inspection',
           entityId: id,
-          // The ID itself is never written to the audit trail in clear text.
           metadata: { fullName: data.fullName, hasNationalId: Boolean(nationalIdEnc) },
           meta,
         },
@@ -629,9 +609,6 @@ export class InspectionsService {
     await this.assertEditable(user, id, dto.baseVersion);
 
     await this.prisma.runInTransaction(async (tx) => {
-      // Figures are stored exactly as entered. No value is derived here: a
-      // silently computed forced-sale figure would shape a lending decision
-      // without anybody having authorised the formula.
       const data = {
         currency: dto.currency ?? 'RWF',
         marketValue: dto.marketValue ?? null,
@@ -702,9 +679,6 @@ export class InspectionsService {
           accuracyM: dto.accuracyM ?? null,
           altitudeM: dto.altitudeM ?? null,
           source: dto.source ?? 'GPS',
-          // Recorded, not enforced. A mock-location flag is worth showing a
-          // reviewer, but blocking on it would reject inspectors whose handsets
-          // report it for benign reasons.
           isMocked: dto.isMocked ?? false,
           capturedAt: new Date(dto.capturedAt),
           distanceFromPropertyM: proximity.distanceM,
@@ -740,12 +714,6 @@ export class InspectionsService {
   // Submission
   // -------------------------------------------------------------------------
 
-  /**
-   * Submits or resubmits an inspection.
-   *
-   * Completeness is re-evaluated server-side here regardless of what the client
-   * believes. A modified app could skip its own checks; this is the control.
-   */
   async submit(user: TenantContext, id: string, meta: RequestMetadata) {
     const inspection = await this.loadForTransition(user, id);
 
@@ -793,9 +761,6 @@ export class InspectionsService {
         },
       });
 
-      // An immutable copy of exactly what was submitted. This is what makes a
-      // later decision traceable to the data the reviewer actually saw, even
-      // after the inspector edits and resubmits.
       await tx.inspectionSnapshot.create({
         data: {
           inspectionId: id,
@@ -804,7 +769,6 @@ export class InspectionsService {
         },
       });
 
-      // Any outstanding correction request is now answered.
       await tx.correctionRequest.updateMany({
         where: { inspectionId: id, resolvedAt: null },
         data: { resolvedAt: new Date() },
@@ -860,8 +824,6 @@ export class InspectionsService {
     sortDir?: 'asc' | 'desc',
   ): Prisma.InspectionOrderByWithRelationInput {
     const direction = sortDir ?? 'desc';
-    // Whitelisted: an unchecked sort field would let a caller order by, and so
-    // infer, columns they are not permitted to read.
     switch (sortBy) {
       case 'inspectionNumber':
         return { inspectionNumber: direction };
@@ -908,10 +870,6 @@ export class InspectionsService {
     return inspection;
   }
 
-  /**
-   * Confirms the caller may edit, and that they are not writing over somebody
-   * else's newer change.
-   */
   private async assertEditable(user: TenantContext, id: string, baseVersion?: number) {
     const inspection = await this.loadForTransition(user, id);
 
@@ -960,8 +918,6 @@ export class InspectionsService {
       throw new NotFoundError(ErrorCode.NOT_FOUND, 'The chosen inspector was not found or is not active.');
     }
 
-    // Assigning fieldwork to somebody who cannot fill it in would create an
-    // inspection nobody is able to progress.
     const canInspect = inspector.userRoles.some((ur) =>
       ur.role.rolePermissions.some((rp) => rp.permission.code === 'inspections.write'),
     );
@@ -983,9 +939,6 @@ export class InspectionsService {
     const year = new Date().getFullYear();
     const prefix = `INS-${year}-`;
 
-    // Derived from the highest existing number rather than a count, so deleting
-    // a record cannot cause the next one to collide. The unique constraint on
-    // (organizationId, inspectionNumber) is the real guarantee.
     const last = await tx.inspection.findFirst({
       where: { organizationId, inspectionNumber: { startsWith: prefix } },
       orderBy: { inspectionNumber: 'desc' },
@@ -1016,20 +969,6 @@ export class InspectionsService {
     });
   }
 
-  /**
-   * Maps stored records onto the completeness engine's input.
-   *
-   * The parameter is typed against what Prisma actually returns. An earlier
-   * version declared `type: never` and `category: never` here, which can never
-   * be satisfied — nothing is assignable *to* never — so every call site failed
-   * to compile. The enum types belong in the signature; `as never` is only ever
-   * safe in an argument position, not a parameter declaration.
-   *
-   * Extra properties on the incoming rows (sortOrder, sectionId, options and so
-   * on) are accepted: TypeScript's structural typing allows a wider object to
-   * satisfy a narrower shape, so both findOne and loadForCompleteness can be
-   * passed straight in.
-   */
   private computeCompleteness(inspection: {
     template: {
       sections: Array<{
@@ -1086,8 +1025,6 @@ export class InspectionsService {
           label: field.label,
           type: field.type,
           required: field.required,
-          // Stored as JSON because validation rules are template-defined and
-          // therefore not known to the schema. The cast is narrow and local.
           validation: (field.validation ?? null) as FieldValidation | null,
         })),
       })),
@@ -1099,8 +1036,6 @@ export class InspectionsService {
       values: inspection.values.map((value) => ({
         fieldId: value.fieldId,
         valueText: value.valueText,
-        // Prisma returns Decimal for money and measurements; the engine compares
-        // against plain numbers, so the conversion happens once, here.
         valueNumber: value.valueNumber === null ? null : Number(value.valueNumber),
         valueDate: value.valueDate,
         valueBool: value.valueBool,
@@ -1120,19 +1055,10 @@ export class InspectionsService {
   }
 
   private buildSnapshot(inspection: Record<string, unknown>) {
-    // Deliberately excludes the template: it is versioned separately and
-    // duplicating it in every snapshot would bloat the table considerably.
     const { template: _template, ...rest } = inspection;
     return rest;
   }
 
-  /**
-   * Works out who should be told that an inspection is waiting.
-   *
-   * A named reviewer takes precedence. Otherwise every user in the organization
-   * holding reviews.decide is notified, so work is never left unseen because
-   * nobody was explicitly assigned.
-   */
   private async resolveReviewers(
     tx: PrismaTransactionClient,
     organizationId: string,
