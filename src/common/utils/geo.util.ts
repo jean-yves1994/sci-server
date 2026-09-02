@@ -7,7 +7,10 @@
  */
 const EARTH_RADIUS_M = 6_371_000;
 
-export interface Coordinates { latitude: number; longitude: number }
+export interface Coordinates {
+  latitude: number;
+  longitude: number;
+}
 
 const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
 
