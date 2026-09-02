@@ -266,7 +266,25 @@ export class InspectionsService {
       );
     }
 
-    if (dto.inspectorId) await this.assertInspector(user, dto.inspectorId);
+    // Inspectors do not have inspections.assign. When they create fieldwork,
+    // the inspection must belong to the creator so the state machine can allow
+    // the creator to start it. Users who can assign retain the existing ability
+    // to create an unassigned inspection or choose a valid inspector.
+    const canAssign = user.permissions.includes('inspections.assign');
+    const isInspectorCreator = !canAssign && user.permissions.includes('inspections.write');
+
+    if (isInspectorCreator && dto.inspectorId && dto.inspectorId !== user.userId) {
+      throw new ForbiddenError(
+        'Inspectors can only create inspections assigned to themselves.',
+        ErrorCode.AUTH_FORBIDDEN,
+      );
+    }
+
+    const inspectorId = dto.inspectorId ?? (isInspectorCreator ? user.userId : null);
+
+    if (inspectorId) await this.assertInspector(user, inspectorId);
+
+    const reviewerId = canAssign ? dto.reviewerId ?? null : null;
 
     const created = await this.prisma.runInTransaction(async (tx) => {
       const inspectionNumber = await this.nextInspectionNumber(tx, user.organizationId);
@@ -281,8 +299,8 @@ export class InspectionsService {
           loanReference: dto.loanReference.trim(),
           clientName: dto.clientName?.trim() ?? null,
           createdById: user.userId,
-          inspectorId: dto.inspectorId ?? null,
-          reviewerId: dto.reviewerId ?? null,
+          inspectorId,
+          reviewerId,
           priority: dto.priority ?? 'NORMAL',
           dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
           assignmentNotes: dto.notes?.trim() ?? null,
@@ -318,10 +336,10 @@ export class InspectionsService {
         },
       });
 
-      if (dto.inspectorId) {
+      if (inspectorId) {
         await this.notifications.create(
           {
-            userId: dto.inspectorId,
+            userId: inspectorId,
             type: 'ASSIGNMENT_CREATED',
             title: 'New inspection assigned',
             message: `${inspectionNumber} — ${property.reference} has been assigned to you.`,
@@ -342,7 +360,7 @@ export class InspectionsService {
           newValue: {
             inspectionNumber,
             loanReference: inspection.loanReference,
-            inspectorId: dto.inspectorId ?? null,
+            inspectorId,
           },
           meta,
         },
