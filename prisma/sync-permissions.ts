@@ -1,82 +1,101 @@
+/* eslint-disable no-console */
+import 'dotenv/config';
+
 import { PrismaClient } from '@prisma/client';
 import { DEFAULT_ROLES, PERMISSIONS } from '../src/common/permissions';
 
 const prisma = new PrismaClient();
+const ORG_CODE = 'SCI-RW';
 
 /**
- * Synchronize the application's permission catalogue and system role grants.
+ * Production-safe RBAC synchronization.
  *
- * This is intentionally separate from prisma/seed.ts: deployment should not
- * recreate demo/reference users or other seed data just to keep RBAC current.
- * The operation is idempotent and only changes permission/role definitions.
+ * Unlike prisma/seed.ts, this script changes only the permission catalogue,
+ * system roles, and their role-permission grants. It does not create users,
+ * branches, templates, or sample data.
  */
-async function main() {
-  for (const permission of Object.values(PERMISSIONS)) {
+async function main(): Promise<void> {
+  const organization = await prisma.organization.findUnique({
+    where: { code: ORG_CODE },
+    select: { id: true, code: true },
+  });
+
+  if (!organization) {
+    throw new Error(`Organization ${ORG_CODE} was not found. Run the initial seed once before permission synchronization.`);
+  }
+
+  // Keep the permission catalogue aligned with the application source.
+  for (const permission of PERMISSIONS) {
     await prisma.permission.upsert({
-      where: { key: permission },
-      update: {},
-      create: { key: permission },
+      where: { code: permission.code },
+      update: {
+        category: permission.category,
+        description: permission.description,
+      },
+      create: {
+        code: permission.code,
+        category: permission.category,
+        description: permission.description,
+      },
     });
   }
 
+  const permissionByCode = new Map(
+    (await prisma.permission.findMany({
+      select: { id: true, code: true },
+    })).map((permission) => [permission.code, permission.id]),
+  );
+
   for (const definition of DEFAULT_ROLES) {
     const role = await prisma.role.upsert({
-      where: { key: definition.key },
+      where: {
+        organizationId_code: {
+          organizationId: organization.id,
+          code: definition.code,
+        },
+      },
       update: {
         name: definition.name,
         description: definition.description,
       },
       create: {
-        key: definition.key,
+        organizationId: organization.id,
+        code: definition.code,
         name: definition.name,
         description: definition.description,
+        isSystem: true,
       },
+      select: { id: true, code: true },
     });
 
-    const permissionRecords = await prisma.permission.findMany({
-      where: { key: { in: definition.permissions } },
-      select: { id: true, key: true },
+    const permissionIds = definition.permissions.map((code) => {
+      const id = permissionByCode.get(code);
+      if (!id) {
+        throw new Error(`Permission ${code} is missing from the permission catalogue.`);
+      }
+      return id;
     });
 
-    const found = new Set(permissionRecords.map((permission) => permission.key));
-    const missing = definition.permissions.filter((permission) => !found.has(permission));
-    if (missing.length > 0) {
-      throw new Error(`Missing permission catalogue entries for ${definition.key}: ${missing.join(', ')}`);
-    }
-
-    const desiredPermissionIds = new Set(permissionRecords.map((permission) => permission.id));
-
-    const existingGrants = await prisma.rolePermission.findMany({
-      where: { roleId: role.id },
-      select: { id: true, permissionId: true },
+    // Make system role grants exactly match DEFAULT_ROLES. This also repairs
+    // existing production databases where a permission was added in code but
+    // the corresponding rolePermission row was never seeded.
+    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+    await prisma.rolePermission.createMany({
+      data: permissionIds.map((permissionId) => ({
+        roleId: role.id,
+        permissionId,
+      })),
+      skipDuplicates: true,
     });
 
-    const staleIds = existingGrants
-      .filter((grant) => !desiredPermissionIds.has(grant.permissionId))
-      .map((grant) => grant.id);
-
-    if (staleIds.length > 0) {
-      await prisma.rolePermission.deleteMany({ where: { id: { in: staleIds } } });
-    }
-
-    const existingPermissionIds = new Set(existingGrants.map((grant) => grant.permissionId));
-    const missingGrants = permissionRecords
-      .filter((permission) => !existingPermissionIds.has(permission.id))
-      .map((permission) => ({ roleId: role.id, permissionId: permission.id }));
-
-    if (missingGrants.length > 0) {
-      await prisma.rolePermission.createMany({
-        data: missingGrants,
-        skipDuplicates: true,
-      });
-    }
-
-    console.log(`Synchronized role ${definition.key}: ${definition.permissions.length} permissions`);
+    console.log(`  ${role.code}: ${permissionIds.length} permissions synchronized`);
   }
+
+  console.log(`RBAC synchronization complete for ${organization.code}.`);
 }
 
 main()
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error('Permission synchronization failed:', error);
     process.exitCode = 1;
   })
