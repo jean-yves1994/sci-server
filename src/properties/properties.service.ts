@@ -109,7 +109,10 @@ export class PropertiesService {
   }
 
   async create(user: TenantContext, dto: CreatePropertyDto, meta: RequestMetadata) {
-    const branchId = dto.branchId ?? user.branchId;
+    // Inspectors use their primary branch automatically. Users who have access
+    // to multiple branches may explicitly provide branchId in the request.
+    const branchId = dto.branchId ?? user.primaryBranchId;
+
     if (!branchId || !canAccessBranch(user, branchId)) {
       throw new ForbiddenError(
         'You cannot register a property for that branch.',
@@ -125,7 +128,8 @@ export class PropertiesService {
       );
     }
 
-    const reference = dto.reference?.trim().toUpperCase() || await this.generateReference(user.organizationId);
+    const reference =
+      dto.reference?.trim().toUpperCase() || (await this.generateReference(user.organizationId));
 
     const existing = await this.prisma.property.findFirst({
       where: { organizationId: user.organizationId, reference },
@@ -194,12 +198,16 @@ export class PropertiesService {
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.propertyType !== undefined ? { propertyType: dto.propertyType.trim() } : {}),
-        ...(dto.ownerClientName !== undefined ? { ownerClientName: dto.ownerClientName.trim() } : {}),
+        ...(dto.ownerClientName !== undefined
+          ? { ownerClientName: dto.ownerClientName.trim() }
+          : {}),
         ...(dto.province !== undefined ? { province: dto.province.trim() } : {}),
         ...(dto.district !== undefined ? { district: dto.district.trim() } : {}),
         ...(dto.sector !== undefined ? { sector: dto.sector.trim() } : {}),
         ...(dto.cell !== undefined ? { cell: dto.cell.trim() } : {}),
-        ...(dto.villageStreet !== undefined ? { villageStreet: dto.villageStreet.trim() || null } : {}),
+        ...(dto.villageStreet !== undefined
+          ? { villageStreet: dto.villageStreet.trim() || null }
+          : {}),
       },
     });
 
