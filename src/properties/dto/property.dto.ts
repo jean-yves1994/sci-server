@@ -1,61 +1,125 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import {
-  IsLatitude, IsLongitude, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, MaxLength,
-} from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreatePropertyDto {
-  @ApiProperty({ example: 'PROP-2026-0001' })
-  @IsString() @IsNotEmpty() @MaxLength(40)
-  reference: string;
+  @ApiPropertyOptional({
+    example: 'PROP-2026-0001',
+    description: 'Optional property reference. If omitted, the backend generates one.',
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  reference?: string;
 
-  @ApiProperty() @IsUUID()
-  branchId: string;
+  @ApiProperty({ example: 'Kigali Commercial Building' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  name: string;
 
-  @ApiProperty({ example: 'Residential house' })
-  @IsString() @IsNotEmpty() @MaxLength(60)
+  @ApiProperty({
+    example: 'Commercial',
+    enum: ['Residential', 'Commercial', 'Industrial', 'Agricultural', 'Land', 'Other'],
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(30)
   propertyType: string;
 
-  @ApiProperty() @IsString() @IsNotEmpty() @MaxLength(250)
-  addressLine: string;
+  @ApiProperty({ example: 'John Doe' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  ownerClientName: string;
 
-  @ApiPropertyOptional() @IsUUID() @IsOptional()
-  divisionId?: string;
+  @ApiProperty({ example: 'Kigali' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  province: string;
 
-  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(60)
-  plotNumber?: string;
+  @ApiProperty({ example: 'Gasabo' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  district: string;
 
-  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(60)
-  titleNumber?: string;
+  @ApiProperty({ example: 'Kimironko' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  sector: string;
 
-  @ApiPropertyOptional({ description: 'Registered position, used for proof-of-presence.' })
-  @Type(() => Number) @IsLatitude() @IsOptional()
-  latitude?: number;
+  @ApiProperty({ example: 'Nyagatovu' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  cell: string;
 
-  @ApiPropertyOptional()
-  @Type(() => Number) @IsLongitude() @IsOptional()
-  longitude?: number;
+  @ApiPropertyOptional({ example: 'KG 11 Ave' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(150)
+  villageStreet?: string;
+
+  @ApiPropertyOptional({
+    example: 'uuid-of-branch',
+    description: 'Branch owning the property record. The authenticated user must have access to it.',
+  })
+  @IsString()
+  @IsOptional()
+  branchId?: string;
 }
 
 export class UpdatePropertyDto {
-  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(60)
+  @ApiPropertyOptional({ example: 'Kigali Commercial Building' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(150)
+  name?: string;
+
+  @ApiPropertyOptional({
+    example: 'Commercial',
+    enum: ['Residential', 'Commercial', 'Industrial', 'Agricultural', 'Land', 'Other'],
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
   propertyType?: string;
 
-  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(250)
-  addressLine?: string;
+  @ApiPropertyOptional({ example: 'John Doe' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(150)
+  ownerClientName?: string;
 
-  @ApiPropertyOptional() @IsUUID() @IsOptional()
-  divisionId?: string;
+  @ApiPropertyOptional({ example: 'Kigali' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  province?: string;
 
-  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(60)
-  plotNumber?: string;
+  @ApiPropertyOptional({ example: 'Gasabo' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  district?: string;
 
-  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(60)
-  titleNumber?: string;
+  @ApiPropertyOptional({ example: 'Kimironko' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  sector?: string;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsLatitude() @IsOptional()
-  latitude?: number;
+  @ApiPropertyOptional({ example: 'Nyagatovu' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  cell?: string;
 
-  @ApiPropertyOptional() @Type(() => Number) @IsLongitude() @IsOptional()
-  longitude?: number;
+  @ApiPropertyOptional({ example: 'KG 11 Ave' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(150)
+  villageStreet?: string;
 }
