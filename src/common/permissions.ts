@@ -62,9 +62,10 @@ export const DEFAULT_ROLES: Array<{
   {
     code: 'INSPECTOR',
     name: 'Inspector',
-    description: 'Carries out field inspections and submits them for review.',
+    description: 'Carries out field inspections and can register properties and raise inspections for their own fieldwork.',
     permissions: [
-      'branches.read','properties.read','inspections.read','inspections.write',
+      'branches.read','properties.read','properties.write',
+      'inspections.read','inspections.write','inspections.create',
       'reports.read','templates.read',
     ],
   },
