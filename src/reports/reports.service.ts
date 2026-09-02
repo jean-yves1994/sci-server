@@ -5,7 +5,7 @@ import { PaginatedResult, paginate } from '../common/dto/pagination.dto';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../common/errors/domain.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { RequestMetadata, TenantContext, buildTenantScope, canAccessBranch } from '../common/tenant-context';
-import { PrismaService, PrismaTransactionClient } from '../database/prisma.service';
+import { PrismaService } from '../database/prisma.service';
 import { InspectionAction, evaluateTransition } from '../inspections/domain/inspection-state-machine';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StorageProvider } from '../providers/storage/storage.provider';
@@ -285,6 +285,16 @@ export class ReportsService {
       .filter((entry) => entry.value !== '')
       .sort((a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder);
 
+    const propertyAddress = [
+      inspection.property.villageStreet,
+      inspection.property.cell,
+      inspection.property.sector,
+      inspection.property.district,
+      inspection.property.province,
+    ]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .join(', ');
+
     return {
       organization: {
         name: inspection.organization.name,
@@ -309,7 +319,7 @@ export class ReportsService {
       property: {
         reference: inspection.property.reference,
         propertyType: inspection.property.propertyType,
-        addressLine: inspection.property.addressLine,
+        addressLine: propertyAddress || inspection.property.addressLine || '—',
         plotNumber: inspection.property.plotNumber,
         titleNumber: inspection.property.titleNumber,
         division: inspection.property.division?.name ?? null,
