@@ -9,6 +9,7 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { PaypackClient } from './paypack.client';
 
 /** The standard inspection fee, in RWF. The server is the authority. */
+/** The Payment time will be done before the inspection is completed. */
 const FEE_AMOUNT_RWF = 15_000;
 
 @Injectable()
