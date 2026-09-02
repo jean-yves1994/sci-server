@@ -299,6 +299,7 @@ model User {
   photosCaptured       InspectionPhoto[]
   reportsGenerated     Report[]
   correctionsRaised    CorrectionRequest[]
+  feesRequested        InspectionFee[]         @relation("FeeRequestedBy")
 
   @@index([organizationId])
   @@index([branchId])
@@ -434,15 +435,15 @@ model TemplateSection {
 }
 
 model TemplateField {
-  id        String    @id @default(uuid())
-  sectionId String
-  code      String
-  label     String
-  type      FieldType
-  required  Boolean   @default(false)
-  sortOrder Int       @default(0)
+  id         String    @id @default(uuid())
+  sectionId  String
+  code       String
+  label      String
+  type       FieldType
+  required   Boolean   @default(false)
+  sortOrder  Int       @default(0)
   /// JSON array of {value,label} for SELECT / MULTI_SELECT.
-  options   Json?
+  options    Json?
   /// JSON {min,max,minLength,maxLength,pattern}. Enforced server-side.
   validation Json?
   helpText   String?
@@ -525,8 +526,9 @@ model Inspection {
   approvedAt  DateTime?
 
   assignmentNotes String?
+
   /// Increments on each submission so review rounds stay distinguishable.
-  submissionCount Int     @default(0)
+  submissionCount Int @default(0)
 
   /// Optimistic concurrency token. A reviewer approving a stale version is
   /// refused rather than silently overwriting a newer correction.
@@ -550,6 +552,7 @@ model Inspection {
 
   owner        InspectionOwner?
   valuation    InspectionValuation?
+  fee          InspectionFee?
   locations    InspectionLocation[]
   values       InspectionValue[]
   assessments  InspectionAssessment[]
@@ -651,19 +654,19 @@ model InspectionValuation {
 /// Every capture is kept, not just the latest, so a reviewer can see whether
 /// the inspector moved around the site or captured once from a distance.
 model InspectionLocation {
-  id           String         @id @default(uuid())
-  inspectionId String
-  latitude     Decimal        @db.Decimal(10, 7)
-  longitude    Decimal        @db.Decimal(10, 7)
-  accuracyM    Float?
-  altitudeM    Float?
-  source       LocationSource @default(GPS)
+  id                    String         @id @default(uuid())
+  inspectionId          String
+  latitude              Decimal        @db.Decimal(10, 7)
+  longitude             Decimal        @db.Decimal(10, 7)
+  accuracyM             Float?
+  altitudeM             Float?
+  source                LocationSource @default(GPS)
   /// Recorded and surfaced to the reviewer, not used to block automatically.
-  isMocked     Boolean        @default(false)
-  capturedAt   DateTime
+  isMocked              Boolean        @default(false)
+  capturedAt            DateTime
   /// Computed server-side. Never accepted from a client, which could lie.
   distanceFromPropertyM Int?
-  createdAt             DateTime @default(now())
+  createdAt             DateTime       @default(now())
 
   inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
 
@@ -839,4 +842,49 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([action])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Inspection Fees
+// ---------------------------------------------------------------------------
+
+enum FeeStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+}
+
+/// The inspection fee charged to the borrower.
+///
+/// One row per inspection, enforced by the unique constraint. That constraint
+/// is the real protection against double-charging: an idempotency key handles
+/// a retried HTTP request, but a unique index handles two requests arriving
+/// concurrently from two devices, which no application-level check can.
+model InspectionFee {
+  id           String     @id @default(uuid())
+  inspectionId String     @unique
+  inspection   Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  amount   Int    @default(15000)
+  currency String @default("RWF")
+
+  /// The client's number. Stored so the audit trail records who was asked,
+  /// not merely that someone was.
+  phoneNumber String
+
+  status FeeStatus @default(PENDING)
+
+  /// Paypack's transaction reference, used for reconciliation.
+  providerRef String? @unique
+
+  failureReason String?
+
+  requestedById String
+  requestedBy   User   @relation("FeeRequestedBy", fields: [requestedById], references: [id])
+
+  requestedAt DateTime  @default(now())
+  settledAt   DateTime?
+
+  @@index([status])
+  @@map("inspection_fees")
 }
