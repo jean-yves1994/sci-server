@@ -10,39 +10,67 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const config = loadConfig();
 
-  const app = await NestFactory.create(AppModule, { bufferLogs: false });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: false,
+  });
 
-  // 1. Enable CORS with dynamic origin reflection
-  // This allows any origin (Web, Mobile, Localhost) while supporting cookies/credentials
+  // 1. Enable CORS
+  // Allows Web, Flutter Web, mobile clients, and localhost development.
+  // `origin: true` dynamically reflects the requesting origin.
   app.enableCors({
     origin: true,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    methods: [
+      'GET',
+      'HEAD',
+      'PUT',
+      'PATCH',
+      'POST',
+      'DELETE',
+      'OPTIONS',
+    ],
     credentials: true,
-    allowedHeaders: 'Content-Type, Authorization, Accept, X-Requested-With',
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+      'X-Client-Request-Id',
+    ],
   });
 
   app.setGlobalPrefix('api/v1');
+
   app.use(cookieParser());
 
   // 2. Configure Helmet
   app.use(
     helmet({
-      // Disable CSP in development for easier debugging; enable in production
-      contentSecurityPolicy: config.nodeEnv === 'production' ? undefined : false,
-      // CRITICAL: Set to 'cross-origin' so external sites can load your resources
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      // Disable CSP in development for easier debugging;
+      // enable the default Helmet CSP configuration in production.
+      contentSecurityPolicy:
+        config.nodeEnv === 'production' ? undefined : false,
+
+      // Allow resources to be loaded across origins.
+      crossOriginResourcePolicy: {
+        policy: 'cross-origin',
+      },
     }),
   );
 
+  // 3. Global validation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      transformOptions: { enableImplicitConversion: false },
+      transformOptions: {
+        enableImplicitConversion: false,
+      },
     }),
   );
 
+  // 4. Swagger configuration
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Smart Collateral Inspection API')
     .setDescription('Collateral inspection workflow.')
@@ -50,9 +78,13 @@ async function bootstrap(): Promise<void> {
     .addBearerAuth()
     .build();
 
-  SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
 
+  SwaggerModule.setup('api/docs', app, document);
+
+  // 5. Start server
   await app.listen(config.port);
+
   logger.log(`API listening on port ${config.port}`);
 }
 
