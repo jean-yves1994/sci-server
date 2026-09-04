@@ -36,6 +36,7 @@ async function bootstrap(): Promise<void> {
       'Origin',
       'X-Requested-With',
       'X-Client-Request-Id',
+      'X-Client-Platform',
     ],
   });
 
@@ -46,12 +47,8 @@ async function bootstrap(): Promise<void> {
   // 2. Configure Helmet
   app.use(
     helmet({
-      // Disable CSP in development for easier debugging;
-      // enable the default Helmet CSP configuration in production.
       contentSecurityPolicy:
         config.nodeEnv === 'production' ? undefined : false,
-
-      // Allow resources to be loaded across origins.
       crossOriginResourcePolicy: {
         policy: 'cross-origin',
       },
