@@ -15,10 +15,18 @@ async function bootstrap(): Promise<void> {
   });
 
   // 1. Enable CORS
-  // Allows Web, Flutter Web, mobile clients, and localhost development.
-  // `origin: true` dynamically reflects the requesting origin.
+  // Allow all HTTPS origins while still supporting non-browser clients
+  // that do not send an Origin header (for example Flutter mobile, Postman,
+  // and server-to-server requests).
   app.enableCors({
-    origin: true,
+    origin: (origin, callback) => {
+      if (!origin || origin.startsWith('https://')) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('CORS origin not allowed'), false);
+    },
     methods: [
       'GET',
       'HEAD',
