@@ -1,19 +1,20 @@
 import { Global, Module } from '@nestjs/common';
-import { LocalStorageProvider } from './local-storage.provider';
+import { BlobStorageProvider } from './blob-storage.provider';
 import { StorageProvider } from './storage.provider';
 
 /**
  * Storage wiring.
  *
- * `useExisting` rather than `useClass` so both tokens resolve to one instance —
- * two instances would each hold their own signing state.
+ * Vercel Blob is the production storage backend. The API runs as serverless
+ * functions on Vercel, so inspection evidence must never depend on the local
+ * filesystem.
  */
 @Global()
 @Module({
   providers: [
-    LocalStorageProvider,
-    { provide: StorageProvider, useExisting: LocalStorageProvider },
+    BlobStorageProvider,
+    { provide: StorageProvider, useExisting: BlobStorageProvider },
   ],
-  exports: [StorageProvider, LocalStorageProvider],
+  exports: [StorageProvider, BlobStorageProvider],
 })
 export class StorageModule {}
