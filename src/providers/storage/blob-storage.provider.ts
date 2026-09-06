@@ -44,12 +44,23 @@ export class BlobStorageProvider extends StorageProvider {
   async put(key: string, body: Buffer, contentType: string): Promise<StoredObject> {
     this.assertConfigured();
 
-    await put(key, body, {
-      access: 'private',
-      token: this.token,
-      addRandomSuffix: false,
-      contentType,
-    });
+    // Photo keys are content-addressed (inspection + SHA-256 prefix), so the
+    // same key represents the same photograph. A previous request may already
+    // have uploaded the Blob before its database write failed or the client
+    // timed out. Reusing that object makes retries safe.
+    const alreadyExists = await this.exists(key);
+    if (!alreadyExists) {
+      // Keep the deterministic key. allowOverwrite also closes the small race
+      // where two identical uploads both observe the key as absent before one
+      // of them writes it.
+      await put(key, body, {
+        access: 'private',
+        token: this.token,
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType,
+      });
+    }
 
     return {
       key,
