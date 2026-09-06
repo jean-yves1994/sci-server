@@ -9,8 +9,7 @@ import { StorageProvider, StoredObject } from './storage.provider';
  *
  * Inspection photographs and generated reports are sensitive evidence, so the
  * Blob store must remain private. The application exposes files only through
- * its own signed /files endpoint, where authorization and download auditing
- * can be enforced.
+ * its own signed /api/v1/files endpoint.
  */
 @Injectable()
 export class BlobStorageProvider extends StorageProvider {
@@ -21,24 +20,30 @@ export class BlobStorageProvider extends StorageProvider {
 
   constructor(private readonly config: ConfigService) {
     super();
-    this.token = this.config.get<string>('BLOB_READ_WRITE_TOKEN') ?? '';
+    this.token = this.config.get<string>('BLOB_READ_WRITE_TOKEN')?.trim() ?? '';
     this.signingSecret = this.config.get<string>('JWT_SECRET') ?? '';
-    this.publicBaseUrl =
-      this.config.get<string>('PUBLIC_API_URL') ?? 'https://sci-server.vercel.app/api/v1';
+    this.publicBaseUrl = absoluteBase(
+      this.config.get<string>('FILE_HOST') ??
+        this.config.get<string>('API_URL') ??
+        this.config.get<string>('PUBLIC_API_URL'),
+    );
+  }
 
+  /** Called by StorageModule for the selected storage driver. */
+  assertConfigured(): void {
     if (!this.token) {
-      this.logger.error(
-        'BLOB_READ_WRITE_TOKEN is not set. Photo and report storage will fail. ' +
-          'Create/connect a private Blob store to this project.',
+      throw new Error(
+        'BLOB_READ_WRITE_TOKEN is not set. Connect the Vercel Blob store to the Production deployment and redeploy.',
       );
+    }
+    if (!this.signingSecret) {
+      throw new Error('JWT_SECRET is not set; signed file URLs cannot be issued.');
     }
   }
 
-  /**
-   * Keep the canonical application key unchanged. The database stores this key
-   * and uses it for subsequent private Blob reads.
-   */
   async put(key: string, body: Buffer, contentType: string): Promise<StoredObject> {
+    this.assertConfigured();
+
     await put(key, body, {
       access: 'private',
       token: this.token,
@@ -54,6 +59,8 @@ export class BlobStorageProvider extends StorageProvider {
   }
 
   async get(key: string): Promise<Buffer> {
+    this.assertConfigured();
+
     const result = await get(key, {
       access: 'private',
       token: this.token,
@@ -67,6 +74,8 @@ export class BlobStorageProvider extends StorageProvider {
   }
 
   async delete(key: string): Promise<void> {
+    this.assertConfigured();
+
     try {
       const metadata = await head(key, { token: this.token });
       await del(metadata.url, { token: this.token });
@@ -76,6 +85,8 @@ export class BlobStorageProvider extends StorageProvider {
   }
 
   async exists(key: string): Promise<boolean> {
+    this.assertConfigured();
+
     try {
       await head(key, { token: this.token });
       return true;
@@ -85,15 +96,17 @@ export class BlobStorageProvider extends StorageProvider {
   }
 
   /**
-   * The returned URL points to the application's authenticated file endpoint,
-   * not directly to Blob. This keeps private Blob credentials server-side and
-   * ensures every download passes through the existing authorization/audit path.
+   * Returns an absolute application URL. The private Blob URL is never exposed
+   * to the client; /api/v1/files fetches the object server-side after checking
+   * the short-lived HMAC signature.
    */
   async getSignedUrl(
     key: string,
     ttlSeconds: number,
     disposition: 'inline' | 'attachment' = 'inline',
   ): Promise<string> {
+    this.assertConfigured();
+
     const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
     const nonce = randomBytes(8).toString('hex');
 
@@ -132,4 +145,22 @@ export class BlobStorageProvider extends StorageProvider {
       .update(`${key}:${expires}:${nonce}:${disposition}`)
       .digest('hex');
   }
+}
+
+/**
+ * Normalize the configured API host defensively. Accepts a full URL, a bare
+ * hostname, or an existing /api/v1 base and always returns an absolute base.
+ */
+function absoluteBase(rawValue?: string): string {
+  const raw = (rawValue ?? '').trim().replace(/\/+$/, '');
+
+  if (!raw) {
+    throw new Error(
+      'FILE_HOST, API_URL, or PUBLIC_API_URL must be set so signed file URLs can be absolute.',
+    );
+  }
+
+  const base = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const normalized = base.replace(/\/+$/, '');
+  return /\/api\/v1$/i.test(normalized) ? normalized : `${normalized}/api/v1`;
 }
