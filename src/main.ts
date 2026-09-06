@@ -15,12 +15,23 @@ async function bootstrap(): Promise<void> {
   });
 
   // 1. Enable CORS
-  // Allow all HTTPS origins while still supporting non-browser clients
-  // that do not send an Origin header (for example Flutter mobile, Postman,
-  // and server-to-server requests).
+  // Allow HTTPS origins in production and local HTTP origins used by
+  // Flutter Web during development. Native Flutter clients normally do not
+  // send an Origin header, so those requests are also allowed.
   app.enableCors({
     origin: (origin, callback) => {
-      if (!origin || origin.startsWith('https://')) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      const isHttpsOrigin = origin.startsWith('https://');
+      const isLocalDevelopmentOrigin =
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:') ||
+        origin.startsWith('http://[::1]:');
+
+      if (isHttpsOrigin || isLocalDevelopmentOrigin) {
         callback(null, true);
         return;
       }
