@@ -15,14 +15,6 @@ import { isEditable } from '../inspections/domain/inspection-state-machine';
 import { StorageProvider } from '../providers/storage/storage.provider';
 import { UploadPhotoDto } from './dto/photo.dto';
 
-/**
- * Magic-number signatures.
- *
- * The declared MIME type and the file extension both come from the client and
- * are trivially forged. Checking the leading bytes is what actually establishes
- * that an upload is the image it claims to be, rather than a script renamed to
- * .jpg in the hope that something downstream will execute it.
- */
 const SIGNATURES: Array<{ mime: string; test: (b: Buffer) => boolean }> = [
   { mime: 'image/jpeg', test: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
   {
@@ -39,7 +31,7 @@ const SIGNATURES: Array<{ mime: string; test: (b: Buffer) => boolean }> = [
 ];
 
 const MAX_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 15 * 1024 * 1024);
-const SIGNED_URL_TTL_SECONDS = 600;
+const SIGNED_URL_TTL_SECONDS = 900;
 
 @Injectable()
 export class PhotosService {
@@ -51,12 +43,6 @@ export class PhotosService {
     private readonly audit: AuditService,
   ) {}
 
-  /**
-   * Stores a photograph and its metadata.
-   *
-   * `clientRequestId` makes the upload idempotent: a phone that retries after a
-   * timeout gets the original record back rather than creating a duplicate.
-   */
   async upload(
     user: TenantContext,
     inspectionId: string,
@@ -109,8 +95,6 @@ export class PhotosService {
         where: { clientRequestId: dto.clientRequestId },
         select: { id: true, inspectionId: true, category: true, storageKey: true },
       });
-      // Returned as-is rather than treated as an error: from the device's point
-      // of view the upload did succeed, and it simply never heard back.
       if (existing) return { ...existing, duplicate: true };
     }
 
@@ -131,9 +115,6 @@ export class PhotosService {
           sizeBytes: stored.sizeBytes,
           checksumSha256: stored.checksumSha256,
           caption: dto.caption?.trim() ?? null,
-          // Geotag metadata is stored in the database rather than left embedded
-          // in the file, so it can be queried, and so stripping the image later
-          // does not lose the evidence.
           latitude:
             dto.latitude !== undefined &&
             isPlausibleCoordinate({ latitude: dto.latitude, longitude: dto.longitude ?? 0 })
@@ -171,7 +152,7 @@ export class PhotosService {
     return { ...photo, duplicate: false };
   }
 
-  /** Lists photographs with short-lived signed URLs. */
+  /** Lists photographs with 15-minute signed URLs. */
   async list(user: TenantContext, inspectionId: string) {
     const inspection = await this.prisma.inspection.findFirst({
       where: { id: inspectionId, organizationId: user.organizationId, deletedAt: null },
@@ -202,13 +183,6 @@ export class PhotosService {
     );
   }
 
-  /**
-   * Removes a photograph before submission.
-   *
-   * Soft-deleted, and the object is left in storage: a photograph that formed
-   * part of an earlier submission is evidence, and destroying the file would
-   * break the traceability of any review that referenced it.
-   */
   async remove(user: TenantContext, photoId: string, meta: RequestMetadata): Promise<void> {
     const photo = await this.prisma.inspectionPhoto.findFirst({
       where: { id: photoId, deletedAt: null },
