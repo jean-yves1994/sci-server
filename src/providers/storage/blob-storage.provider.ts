@@ -1,23 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { del, head, put } from '@vercel/blob';
+import { del, get, head, put } from '@vercel/blob';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { StorageProvider, StoredObject } from './storage.provider';
 
 /**
- * Object storage backed by Vercel Blob.
+ * Object storage backed by a private Vercel Blob store.
  *
- * Required on any serverless host, where the filesystem is ephemeral: writes
- * during one invocation are gone by the next, so inspection photographs and
- * generated PDFs would disappear while the API kept returning 200. Since those
- * photographs are the evidence a lending decision rests on, that is the worst
- * available failure mode.
- *
- * The signing scheme is deliberately identical to LocalStorageProvider, so the
- * URL still points at the application's own /files endpoint rather than at a
- * Blob URL. Authorisation and the download audit record both live in that
- * endpoint; handing out Blob URLs would let a report be read without being
- * logged.
+ * Inspection photographs and generated reports are sensitive evidence, so the
+ * Blob store must remain private. The application exposes files only through
+ * its own signed /files endpoint, where authorization and download auditing
+ * can be enforced.
  */
 @Injectable()
 export class BlobStorageProvider extends StorageProvider {
@@ -34,24 +27,20 @@ export class BlobStorageProvider extends StorageProvider {
       this.config.get<string>('PUBLIC_API_URL') ?? 'https://sci-server.vercel.app/api/v1';
 
     if (!this.token) {
-      // Failing loudly at boot beats discovering this on the first upload,
-      // when an inspector is standing at a property with a full memory card.
       this.logger.error(
         'BLOB_READ_WRITE_TOKEN is not set. Photo and report storage will fail. ' +
-          'Create a Blob store in the Vercel dashboard and connect it to this project.',
+          'Create/connect a private Blob store to this project.',
       );
     }
   }
 
   /**
-   * addRandomSuffix is false deliberately: the database already holds
-   * `storageKey` as the canonical reference, and letting Blob rewrite the
-   * pathname would break every existing row. Application-generated keys embed a
-   * content hash, so collisions are not a concern.
+   * Keep the canonical application key unchanged. The database stores this key
+   * and uses it for subsequent private Blob reads.
    */
   async put(key: string, body: Buffer, contentType: string): Promise<StoredObject> {
     await put(key, body, {
-      access: 'public',
+      access: 'private',
       token: this.token,
       addRandomSuffix: false,
       contentType,
@@ -65,18 +54,19 @@ export class BlobStorageProvider extends StorageProvider {
   }
 
   async get(key: string): Promise<Buffer> {
-    const metadata = await head(key, { token: this.token });
-    const response = await fetch(metadata.url);
+    const result = await get(key, {
+      access: 'private',
+      token: this.token,
+    });
 
-    if (!response.ok) {
-      throw new Error(`Blob fetch failed for ${key}: ${response.status}`);
+    if (!result) {
+      throw new Error(`Blob not found: ${key}`);
     }
-    return Buffer.from(await response.arrayBuffer());
+
+    return Buffer.from(await new Response(result.stream).arrayBuffer());
   }
 
   async delete(key: string): Promise<void> {
-    // del() takes a URL rather than a pathname, so metadata comes first.
-    // A missing object is treated as already deleted.
     try {
       const metadata = await head(key, { token: this.token });
       await del(metadata.url, { token: this.token });
@@ -94,6 +84,11 @@ export class BlobStorageProvider extends StorageProvider {
     }
   }
 
+  /**
+   * The returned URL points to the application's authenticated file endpoint,
+   * not directly to Blob. This keeps private Blob credentials server-side and
+   * ensures every download passes through the existing authorization/audit path.
+   */
   async getSignedUrl(
     key: string,
     ttlSeconds: number,
