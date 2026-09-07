@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreatePropertyDto {
@@ -63,6 +64,26 @@ export class CreatePropertyDto {
   villageStreet?: string;
 
   @ApiPropertyOptional({
+    description: 'Cadastral parcel number. Shown to inspectors as "Plot number".',
+    example: '1234',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  plotNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Land title reference. Shown to inspectors as "UPI".',
+    example: '1/03/07/04/1234',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  titleNumber?: string;
+
+  @ApiPropertyOptional({
     example: 'uuid-of-branch',
     description: 'Branch owning the property record. The authenticated user must have access to it.',
   })
@@ -122,4 +143,24 @@ export class UpdatePropertyDto {
   @IsOptional()
   @MaxLength(150)
   villageStreet?: string;
+
+  @ApiPropertyOptional({
+    description: 'Cadastral parcel number. Shown to inspectors as "Plot number".',
+    example: '1234',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  plotNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Land title reference. Shown to inspectors as "UPI".',
+    example: '1/03/07/04/1234',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  titleNumber?: string;
 }
