@@ -33,6 +33,26 @@ export class CreatePropertyDto {
   @MaxLength(150)
   ownerClientName: string;
 
+  @ApiProperty({
+    description: 'Cadastral parcel number. Shown to inspectors as "Plot number".',
+    example: '1234',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  plotNumber: string;
+
+  @ApiProperty({
+    description: 'Land title reference (UPI).',
+    example: '1/03/07/04/1234',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  titleNumber: string;
+
   @ApiProperty({ example: 'Kigali' })
   @IsString()
   @IsNotEmpty()
@@ -62,26 +82,6 @@ export class CreatePropertyDto {
   @IsOptional()
   @MaxLength(150)
   villageStreet?: string;
-
-  @ApiPropertyOptional({
-    description: 'Cadastral parcel number. Shown to inspectors as "Plot number".',
-    example: '1234',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  plotNumber?: string;
-
-  @ApiPropertyOptional({
-    description: 'Land title reference. Shown to inspectors as "UPI".',
-    example: '1/03/07/04/1234',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  titleNumber?: string;
 
   @ApiPropertyOptional({
     example: 'uuid-of-branch',
@@ -114,6 +114,26 @@ export class UpdatePropertyDto {
   @MaxLength(150)
   ownerClientName?: string;
 
+  @ApiPropertyOptional({
+    description: 'Cadastral parcel number. Shown to inspectors as "Plot number".',
+    example: '1234',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  plotNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Land title reference (UPI).',
+    example: '1/03/07/04/1234',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  titleNumber?: string;
+
   @ApiPropertyOptional({ example: 'Kigali' })
   @IsString()
   @IsOptional()
@@ -143,24 +163,4 @@ export class UpdatePropertyDto {
   @IsOptional()
   @MaxLength(150)
   villageStreet?: string;
-
-  @ApiPropertyOptional({
-    description: 'Cadastral parcel number. Shown to inspectors as "Plot number".',
-    example: '1234',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  plotNumber?: string;
-
-  @ApiPropertyOptional({
-    description: 'Land title reference. Shown to inspectors as "UPI".',
-    example: '1/03/07/04/1234',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  titleNumber?: string;
 }
