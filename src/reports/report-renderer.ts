@@ -190,8 +190,12 @@ export class ReportRenderer {
       ['Type', data.property.propertyType],
       ['Address', data.property.addressLine],
       ['Administrative location', data.property.division ?? '—'],
-      ['Plot number', data.property.plotNumber ?? '—'],
-      ['Title number', data.property.titleNumber ?? '—'],
+    ]);
+
+    this.sectionTitle(doc, 'Land registration');
+    this.keyValues(doc, [
+      ['Plot number', data.property.plotNumber?.trim() || 'Not recorded'],
+      ['UPI', data.property.titleNumber?.trim() || 'Not recorded'],
     ]);
   }
 
@@ -359,6 +363,8 @@ export class ReportRenderer {
   private async drawPhotos(doc: PDFKit.PDFDocument, data: ReportData): Promise<void> {
     if (data.photos.length === 0) return;
 
+    // Photo evidence intentionally starts on a new page, but only when there
+    // is actual photo content. There are no trailing page-breaks after it.
     doc.addPage();
     this.sectionTitle(doc, 'Photographic evidence');
 
@@ -366,15 +372,16 @@ export class ReportRenderer {
     const gap = 14;
     const cellWidth = (CONTENT_WIDTH - gap) / columns;
     const imageHeight = 138;
+    const rowHeight = imageHeight + 40;
+    const bottom = doc.page.height - MARGIN;
 
     let column = 0;
     let rowTop = doc.y;
 
     for (const photo of data.photos) {
-      if (rowTop + imageHeight + 34 > doc.page.height - MARGIN) {
+      if (column === 0 && rowTop + rowHeight > bottom) {
         doc.addPage();
         rowTop = doc.y;
-        column = 0;
       }
 
       const x = MARGIN + column * (cellWidth + gap);
@@ -387,8 +394,6 @@ export class ReportRenderer {
           valign: 'center',
         });
       } catch (error) {
-        // A missing object must not abort the whole report; the caption still
-        // records that the photograph existed.
         this.logger.warn(`Photo ${photo.storageKey} unavailable: ${String(error)}`);
         doc.rect(x, rowTop, cellWidth, imageHeight).fill(COLOURS.panel);
         doc.fillColor(COLOURS.muted).font('Helvetica').fontSize(8)
@@ -410,12 +415,18 @@ export class ReportRenderer {
       column += 1;
       if (column >= columns) {
         column = 0;
-        rowTop += imageHeight + 40;
+        rowTop += rowHeight;
         doc.y = rowTop;
       }
     }
 
-    doc.y = rowTop + (column > 0 ? imageHeight + 40 : 0);
+    // Keep the cursor immediately after the last rendered row so the following
+    // timeline section can continue on the same page when there is room.
+    if (column > 0) {
+      doc.y = rowTop + rowHeight;
+    } else {
+      doc.y = rowTop;
+    }
   }
 
   private drawTimeline(doc: PDFKit.PDFDocument, data: ReportData): void {
