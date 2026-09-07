@@ -188,8 +188,7 @@ export class ReportRenderer {
     this.keyValues(doc, [
       ['Reference', data.property.reference],
       ['Type', data.property.propertyType],
-      ['Address', data.property.addressLine],
-      ['Administrative location', data.property.division ?? '—'],
+      ['Location', data.property.addressLine || 'Not recorded'],
     ]);
 
     this.sectionTitle(doc, 'Land registration');
@@ -363,9 +362,12 @@ export class ReportRenderer {
   private async drawPhotos(doc: PDFKit.PDFDocument, data: ReportData): Promise<void> {
     if (data.photos.length === 0) return;
 
-    // Photo evidence intentionally starts on a new page, but only when there
-    // is actual photo content. There are no trailing page-breaks after it.
-    doc.addPage();
+    // Photo evidence intentionally starts on a new page, but do not add a
+    // second page when the previous section already caused an automatic page
+    // break at the bottom of the preceding page.
+    if (!this.isAtFreshPage(doc)) {
+      doc.addPage();
+    }
     this.sectionTitle(doc, 'Photographic evidence');
 
     const columns = 2;
@@ -420,8 +422,6 @@ export class ReportRenderer {
       }
     }
 
-    // Keep the cursor immediately after the last rendered row so the following
-    // timeline section can continue on the same page when there is room.
     if (column > 0) {
       doc.y = rowTop + rowHeight;
     } else {
@@ -508,6 +508,10 @@ export class ReportRenderer {
     if (doc.y + height > doc.page.height - MARGIN) {
       doc.addPage();
     }
+  }
+
+  private isAtFreshPage(doc: PDFKit.PDFDocument): boolean {
+    return doc.y <= MARGIN + 1;
   }
 
   private humanise(value: string | null): string {
