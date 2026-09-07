@@ -154,6 +154,8 @@ export class PropertiesService {
         sector: dto.sector.trim(),
         cell: dto.cell.trim(),
         villageStreet: dto.villageStreet?.trim() || null,
+        plotNumber: dto.plotNumber?.trim() || null,
+        titleNumber: dto.titleNumber?.trim() || null,
       },
     });
 
@@ -173,6 +175,8 @@ export class PropertiesService {
         sector: property.sector,
         cell: property.cell,
         villageStreet: property.villageStreet,
+        plotNumber: property.plotNumber,
+        titleNumber: property.titleNumber,
       },
       meta,
     });
@@ -208,6 +212,8 @@ export class PropertiesService {
         ...(dto.villageStreet !== undefined
           ? { villageStreet: dto.villageStreet.trim() || null }
           : {}),
+        ...(dto.plotNumber !== undefined ? { plotNumber: dto.plotNumber.trim() || null } : {}),
+        ...(dto.titleNumber !== undefined ? { titleNumber: dto.titleNumber.trim() || null } : {}),
       },
     });
 
@@ -226,6 +232,8 @@ export class PropertiesService {
         sector: before.sector,
         cell: before.cell,
         villageStreet: before.villageStreet,
+        plotNumber: before.plotNumber,
+        titleNumber: before.titleNumber,
       },
       newValue: { ...dto },
       meta,
