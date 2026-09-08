@@ -138,19 +138,31 @@ export class ReportRenderer {
   private drawHeader(doc: PDFKit.PDFDocument, data: ReportData): void {
     doc.rect(0, 0, PAGE_WIDTH, 92).fill(COLOURS.brand);
 
-    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(17)
-      .text('Smart Collateral Inspector', MARGIN, 26);
-
-    doc.font('Helvetica').fontSize(9)
-      .text('Collateral Inspection Report', MARGIN, 48);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(15)
+      .text('REAL COVENANTS LTD', MARGIN, 18, {
+        width: CONTENT_WIDTH,
+        align: 'center',
+      });
 
     doc.font('Helvetica-Bold').fontSize(11)
-      .text(data.reportNumber, MARGIN, 26, { width: CONTENT_WIDTH, align: 'right' });
+      .text('SCI – PROPERTY INSPECTION & VERIFICATION REPORT', MARGIN, 38, {
+        width: CONTENT_WIDTH,
+        align: 'center',
+      });
+
+    doc.font('Helvetica').fontSize(9)
+      .text('SUMMARIZED INSPECTION REPORT', MARGIN, 55, {
+        width: CONTENT_WIDTH,
+        align: 'center',
+      });
+
+    doc.font('Helvetica-Bold').fontSize(11)
+      .text(data.reportNumber, MARGIN, 18, { width: CONTENT_WIDTH, align: 'right' });
 
     doc.font('Helvetica').fontSize(8)
       .text(
         `Version ${data.version} · Generated ${this.formatDateTime(data.generatedAt)}`,
-        MARGIN, 44, { width: CONTENT_WIDTH, align: 'right' },
+        MARGIN, 36, { width: CONTENT_WIDTH, align: 'right' },
       );
 
     doc.fillColor(COLOURS.ink);
