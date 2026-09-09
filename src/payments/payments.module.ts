@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { PaymentsController, PaypackWebhookController } from './payments.controller';
+import { AuditModule } from '../audit/audit.module';
+import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
-import { PaypackClient } from './paypack.client';
+import { PaypackWebhookController } from './paypack-webhook.controller';
+import { PaypackService } from './paypack.service';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [AuditModule],
   controllers: [PaymentsController, PaypackWebhookController],
-  providers: [PaymentsService, PaypackClient],
+  providers: [PaypackService, PaymentsService],
+  // Exported so InspectionsService can read fee status for the START gate.
   exports: [PaymentsService],
 })
 export class PaymentsModule {}

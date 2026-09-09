@@ -12,6 +12,9 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(AppModule, {
     bufferLogs: false,
+    // Webhook signatures are computed over the exact bytes Paypack sent.
+    // A re-serialised body produces a different digest and would never match.
+    rawBody: true,
   });
 
   // 1. Enable CORS
@@ -38,15 +41,7 @@ async function bootstrap(): Promise<void> {
 
       callback(new Error('CORS origin not allowed'), false);
     },
-    methods: [
-      'GET',
-      'HEAD',
-      'PUT',
-      'PATCH',
-      'POST',
-      'DELETE',
-      'OPTIONS',
-    ],
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     credentials: true,
     allowedHeaders: [
       'Content-Type',
@@ -66,8 +61,7 @@ async function bootstrap(): Promise<void> {
   // 2. Configure Helmet
   app.use(
     helmet({
-      contentSecurityPolicy:
-        config.nodeEnv === 'production' ? undefined : false,
+      contentSecurityPolicy: config.nodeEnv === 'production' ? undefined : false,
       crossOriginResourcePolicy: {
         policy: 'cross-origin',
       },

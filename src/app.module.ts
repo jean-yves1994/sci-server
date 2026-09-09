@@ -22,6 +22,7 @@ import { StorageModule } from './providers/storage/storage.module';
 import { SyncModule } from './sync/sync.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsersModule } from './users/users.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [

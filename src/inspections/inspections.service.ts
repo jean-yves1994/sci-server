@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConditionStatus, FieldType, InspectionStatus, PhotoCategory, Prisma } from '@prisma/client';
+import {
+  ConditionStatus,
+  FieldType,
+  InspectionStatus,
+  PhotoCategory,
+  Prisma,
+} from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PaginatedResult, paginate } from '../common/dto/pagination.dto';
 import {
@@ -29,11 +35,7 @@ import {
   SaveValuationDto,
   SaveValuesDto,
 } from './dto/inspection.dto';
-import {
-  CompletenessResult,
-  FieldValidation,
-  evaluateCompleteness,
-} from './domain/completeness';
+import { CompletenessResult, FieldValidation, evaluateCompleteness } from './domain/completeness';
 import {
   InspectionAction,
   REVIEW_QUEUE_STATUSES,
@@ -141,7 +143,9 @@ export class InspectionsService {
       include: {
         property: { include: { division: true } },
         branch: { select: { id: true, code: true, name: true } },
-        inspector: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+        inspector: {
+          select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+        },
         reviewer: { select: { id: true, firstName: true, lastName: true, email: true } },
         createdBy: { select: { id: true, firstName: true, lastName: true } },
         owner: true,
@@ -274,7 +278,7 @@ export class InspectionsService {
 
     if (inspectorId) await this.assertInspector(user, inspectorId);
 
-    const reviewerId = canAssign ? dto.reviewerId ?? null : null;
+    const reviewerId = canAssign ? (dto.reviewerId ?? null) : null;
 
     const created = await this.prisma.runInTransaction(async (tx) => {
       const inspectionNumber = await this.nextInspectionNumber(tx, user.organizationId);
@@ -364,7 +368,8 @@ export class InspectionsService {
   /** Assigns or reassigns an inspector. Reassignment requires a reason. */
   async assign(user: TenantContext, id: string, dto: AssignInspectionDto, meta: RequestMetadata) {
     const inspection = await this.loadForTransition(user, id);
-    const isReassignment = Boolean(inspection.inspectorId) && inspection.inspectorId !== dto.inspectorId;
+    const isReassignment =
+      Boolean(inspection.inspectorId) && inspection.inspectorId !== dto.inspectorId;
 
     const outcome = evaluateTransition({
       action: isReassignment ? InspectionAction.REASSIGN : InspectionAction.ASSIGN,
@@ -454,6 +459,13 @@ export class InspectionsService {
   async start(user: TenantContext, id: string, meta: RequestMetadata) {
     const inspection = await this.loadForTransition(user, id);
 
+    // The fee gate. Undefined means no fee record exists, which the state
+    // machine treats as unsettled — so a missing record fails closed.
+    const fee = await this.prisma.inspectionFee.findUnique({
+      where: { inspectionId: id },
+      select: { status: true },
+    });
+
     const outcome = evaluateTransition({
       action: InspectionAction.START,
       currentStatus: inspection.status,
@@ -461,10 +473,18 @@ export class InspectionsService {
       permissions: user.permissions,
       inspectorId: inspection.inspectorId,
       submittedById: null,
+      feeStatus: fee?.status ?? null,
     });
 
     if (!outcome.allowed) {
-      throw new BadRequestError(ErrorCode.INSPECTION_INVALID_TRANSITION, outcome.reason);
+      // A distinct code so the app can route to the payment screen rather
+      // than showing a message the inspector cannot act on.
+      throw new BadRequestError(
+        outcome.code === 'PAYMENT_REQUIRED'
+          ? ErrorCode.INSPECTION_PAYMENT_REQUIRED
+          : ErrorCode.INSPECTION_INVALID_TRANSITION,
+        outcome.reason,
+      );
     }
 
     await this.prisma.runInTransaction(async (tx) => {
@@ -605,7 +625,12 @@ export class InspectionsService {
     return this.completeness(user, id);
   }
 
-  async saveValuation(user: TenantContext, id: string, dto: SaveValuationDto, meta: RequestMetadata) {
+  async saveValuation(
+    user: TenantContext,
+    id: string,
+    dto: SaveValuationDto,
+    meta: RequestMetadata,
+  ) {
     await this.assertEditable(user, id, dto.baseVersion);
 
     await this.prisma.runInTransaction(async (tx) => {
@@ -784,7 +809,12 @@ export class InspectionsService {
         },
       });
 
-      const reviewers = await this.resolveReviewers(tx, inspection.organizationId, inspection.reviewerId, inspection.branchId);
+      const reviewers = await this.resolveReviewers(
+        tx,
+        inspection.organizationId,
+        inspection.reviewerId,
+        inspection.branchId,
+      );
 
       await this.notifications.createMany(
         reviewers.map((reviewerId) => ({
@@ -802,7 +832,10 @@ export class InspectionsService {
         {
           organizationId: user.organizationId,
           userId: user.userId,
-          action: action === InspectionAction.RESUBMIT ? 'INSPECTION_RESUBMITTED' : 'INSPECTION_SUBMITTED',
+          action:
+            action === InspectionAction.RESUBMIT
+              ? 'INSPECTION_RESUBMITTED'
+              : 'INSPECTION_SUBMITTED',
           entityType: 'Inspection',
           entityId: id,
           metadata: { submissionRound: round, completeness: completeness.percentage },
@@ -910,12 +943,21 @@ export class InspectionsService {
         id: true,
         firstName: true,
         lastName: true,
-        userRoles: { select: { role: { select: { rolePermissions: { select: { permission: { select: { code: true } } } } } } } },
+        userRoles: {
+          select: {
+            role: {
+              select: { rolePermissions: { select: { permission: { select: { code: true } } } } },
+            },
+          },
+        },
       },
     });
 
     if (!inspector) {
-      throw new NotFoundError(ErrorCode.NOT_FOUND, 'The chosen inspector was not found or is not active.');
+      throw new NotFoundError(
+        ErrorCode.NOT_FOUND,
+        'The chosen inspector was not found or is not active.',
+      );
     }
 
     const canInspect = inspector.userRoles.some((ur) =>

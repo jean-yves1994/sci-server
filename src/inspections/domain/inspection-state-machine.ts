@@ -1,4 +1,4 @@
-import { InspectionStatus } from '@prisma/client';
+import { FeeStatus, InspectionStatus } from '@prisma/client';
 
 /**
  * The inspection lifecycle, expressed as data.
@@ -33,6 +33,8 @@ interface TransitionRule {
   forbidSelfReview?: boolean;
   /** A written reason is mandatory. */
   requiresReason?: boolean;
+  /** The inspection fee must be settled before this action is permitted. */
+  requiresSettledFee?: boolean;
 }
 
 export const TRANSITIONS: Record<InspectionAction, TransitionRule> = {
@@ -59,6 +61,10 @@ export const TRANSITIONS: Record<InspectionAction, TransitionRule> = {
     to: InspectionStatus.IN_PROGRESS,
     permission: 'inspections.write',
     assigneeOnly: true,
+    // Fieldwork cannot begin until the inspection fee has been settled.
+    // Declared here rather than in the service so there is still exactly one
+    // place that answers "may this transition happen".
+    requiresSettledFee: true,
   },
   [InspectionAction.SUBMIT]: {
     from: [InspectionStatus.IN_PROGRESS],
@@ -121,6 +127,12 @@ export interface TransitionContext {
   /** Who submitted the work; used to enforce separation of duties. */
   submittedById: string | null;
   reason?: string;
+  /**
+   * Settlement state of the inspection fee, or null when no fee record
+   * exists. Undefined is treated as "not settled" — a caller that forgets to
+   * load it fails closed rather than open.
+   */
+  feeStatus?: FeeStatus | null;
 }
 
 export type TransitionRefusal =
@@ -129,7 +141,8 @@ export type TransitionRefusal =
   | 'MISSING_PERMISSION'
   | 'NOT_ASSIGNEE'
   | 'SELF_REVIEW'
-  | 'REASON_REQUIRED';
+  | 'REASON_REQUIRED'
+  | 'PAYMENT_REQUIRED';
 
 export type TransitionOutcome =
   | { allowed: true; nextStatus: InspectionStatus }
@@ -139,7 +152,11 @@ export function evaluateTransition(ctx: TransitionContext): TransitionOutcome {
   const rule = TRANSITIONS[ctx.action];
 
   if (!rule) {
-    return { allowed: false, code: 'UNKNOWN_ACTION', reason: `Unknown action "${String(ctx.action)}".` };
+    return {
+      allowed: false,
+      code: 'UNKNOWN_ACTION',
+      reason: `Unknown action "${String(ctx.action)}".`,
+    };
   }
 
   if (!rule.from.includes(ctx.currentStatus)) {
@@ -183,6 +200,17 @@ export function evaluateTransition(ctx: TransitionContext): TransitionOutcome {
       allowed: false,
       code: 'REASON_REQUIRED',
       reason: 'A written reason is required for this action.',
+    };
+  }
+
+  // The fee gate. Note the shape of the test: anything other than an explicit
+  // SUCCESSFUL refuses, so a missing fee record, a pending one, or a status
+  // this code does not recognise all fail closed.
+  if (rule.requiresSettledFee && ctx.feeStatus !== FeeStatus.SUCCESSFUL) {
+    return {
+      allowed: false,
+      code: 'PAYMENT_REQUIRED',
+      reason: 'The inspection fee has not been settled.',
     };
   }
 

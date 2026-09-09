@@ -799,8 +799,13 @@ model AuditLog {
 }
 
 enum FeeStatus {
+  /// Record created, no request sent to the provider yet.
   PENDING
+  /// A prompt is on the owner's handset, awaiting their PIN.
+  PROCESSING
+  /// Provider confirmed the funds moved. Only this unlocks the inspection.
   SUCCESSFUL
+  /// Declined, insufficient funds, or expired.
   FAILED
 }
 
@@ -813,6 +818,8 @@ model InspectionFee {
   phoneNumber String
   status FeeStatus @default(PENDING)
   providerRef String? @unique
+  idempotencyKey String?
+  attempts Int @default(0)
   failureReason String?
   requestedById String
   requestedBy   User   @relation("FeeRequestedBy", fields: [requestedById], references: [id])

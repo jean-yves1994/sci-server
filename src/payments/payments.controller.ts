@@ -1,81 +1,52 @@
-import {
-  Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Post, Req,
-} from '@nestjs/common';
-import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
-import type { Request } from 'express';
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Public } from '../common/decorators/public.decorator';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ClientMeta, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { RequestMetadata, TenantContext } from '../common/tenant-context';
+import { RequestFeeDto } from './dto/payment.dto';
 import { PaymentsService } from './payments.service';
-import { RequestFeeDto } from './dto/fee.dto';
 
-@ApiTags('Inspection fee')
+@ApiTags('Inspection fees')
 @ApiBearerAuth()
-@Controller('inspections/:id/fee')
+@Controller('inspections')
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
-  @Get()
+  @Get(':id/payment')
   @RequirePermissions('inspections.read')
-  @ApiOperation({ summary: 'Current fee status for an inspection' })
-  status(
+  @ApiOperation({
+    summary: 'Current inspection fee status; 404 when no fee has been requested',
+  })
+  find(
+    @CurrentUser() user: TenantContext,
     @Param('id', ParseUUIDPipe) id: string,
-    @CurrentUser() user: { organizationId: string },
   ) {
-    return this.payments.status(id, user.organizationId);
+    return this.payments.findByInspection(user, id);
   }
 
-  @Post('request')
+  @Post(':id/payment')
   @RequirePermissions('inspections.write')
-  @ApiOperation({ summary: "Push a payment prompt to the client's phone" })
+  @ApiOperation({
+    summary: "Send a payment prompt to the owner's mobile money number",
+  })
   request(
+    @CurrentUser() user: TenantContext,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RequestFeeDto,
-    @CurrentUser() user: { userId: string; organizationId: string },
+    @ClientMeta() meta: RequestMetadata,
   ) {
-    return this.payments.request(id, dto.phoneNumber, user);
+    return this.payments.request(user, id, dto, meta);
   }
-}
 
-/**
- * Webhook receiver.
- *
- * Public by necessity — Paypack has no bearer token — so authenticity rests
- * entirely on the HMAC signature. Mounted separately from the authenticated
- * routes above so the guard exemption is visible rather than buried.
- */
-@ApiTags('Inspection fee')
-@Controller('webhooks/paypack')
-export class PaypackWebhookController {
-  constructor(private readonly payments: PaymentsService) {}
-
-  @Public()
-  @Post()
-  @HttpCode(200)
-  @ApiExcludeEndpoint()
-  async receive(
-    @Req() request: Request & { rawBody?: Buffer },
-    @Headers('x-paypack-signature') signature: string,
-    @Body() body: { data?: { ref?: string; status?: string } },
+  @Post(':id/payment/retry')
+  @RequirePermissions('inspections.write')
+  @ApiOperation({ summary: 'Send a fresh payment prompt after a failure' })
+  retry(
+    @CurrentUser() user: TenantContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RequestFeeDto,
+    @ClientMeta() meta: RequestMetadata,
   ) {
-    // Requires rawBody. In main.ts:
-    //   NestFactory.create(AppModule, { rawBody: true })
-    const raw = request.rawBody;
-
-    if (!raw || !signature || !this.payments.verifySignature(raw, signature)) {
-      // 200 regardless. Telling an unauthenticated caller that their signature
-      // was wrong helps only someone probing the endpoint; Paypack does not
-      // need to know either way.
-      return { received: true };
-    }
-
-    const ref = body.data?.ref;
-    const status = body.data?.status;
-
-    if (ref && status) {
-      await this.payments.settle(ref, status);
-    }
-
-    return { received: true };
+    return this.payments.retry(user, id, dto, meta);
   }
 }
