@@ -47,6 +47,7 @@ import { PaymentsModule } from './payments/payments.module';
     SyncModule,
     FilesModule,
     HealthModule,
+    PaymentsModule,
   ],
   providers: [
     // Order matters: authentication populates the security context that the
