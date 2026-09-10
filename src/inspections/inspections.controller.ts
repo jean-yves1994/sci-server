@@ -44,7 +44,20 @@ export class InspectionsController {
     @Body() dto: CreateInspectionDto,
     @ClientMeta() meta: RequestMetadata,
   ) {
-    return this.inspections.create(user, dto, meta);
+    // An inspector raising their own fieldwork must remain the assignee even
+    // when the role also carries the generic assignment permission. The
+    // service still validates the target inspector and tenant/branch access.
+    const isInspector = user.roles.some(
+      (role) => role.trim().toLowerCase() === 'inspector',
+    );
+    const createDto =
+      isInspector && !dto.inspectorId
+        ? Object.assign(Object.create(Object.getPrototypeOf(dto)), dto, {
+            inspectorId: user.userId,
+          })
+        : dto;
+
+    return this.inspections.create(user, createDto, meta);
   }
 
   @Post(':id/assign')
