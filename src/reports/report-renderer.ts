@@ -138,31 +138,44 @@ export class ReportRenderer {
   private drawHeader(doc: PDFKit.PDFDocument, data: ReportData): void {
     doc.rect(0, 0, PAGE_WIDTH, 92).fill(COLOURS.brand);
 
+    // Keep the document identity in its own left/centre area and the report
+    // metadata in a dedicated right-hand block. Previously both blocks used
+    // the same full-width coordinates, causing the report number/version to
+    // overlap the centered title.
+    const titleWidth = 345;
+    const metaX = MARGIN + titleWidth + 10;
+    const metaWidth = CONTENT_WIDTH - titleWidth - 10;
+
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(15)
-      .text('REAL COVENANTS LTD', MARGIN, 18, {
-        width: CONTENT_WIDTH,
+      .text('REAL COVENANTS LTD', MARGIN, 16, {
+        width: titleWidth,
         align: 'center',
       });
 
-    doc.font('Helvetica-Bold').fontSize(11)
+    doc.font('Helvetica-Bold').fontSize(10.5)
       .text('SCI – PROPERTY INSPECTION & VERIFICATION REPORT', MARGIN, 38, {
-        width: CONTENT_WIDTH,
+        width: titleWidth,
         align: 'center',
       });
 
-    doc.font('Helvetica').fontSize(9)
-      .text('SUMMARIZED INSPECTION REPORT', MARGIN, 55, {
-        width: CONTENT_WIDTH,
+    doc.font('Helvetica').fontSize(8.5)
+      .text('SUMMARIZED INSPECTION REPORT', MARGIN, 57, {
+        width: titleWidth,
         align: 'center',
       });
 
-    doc.font('Helvetica-Bold').fontSize(11)
-      .text(data.reportNumber, MARGIN, 18, { width: CONTENT_WIDTH, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(9)
+      .text(data.reportNumber, metaX, 17, {
+        width: metaWidth,
+        align: 'right',
+        ellipsis: true,
+      });
 
-    doc.font('Helvetica').fontSize(8)
+    doc.font('Helvetica').fontSize(7.5)
       .text(
         `Version ${data.version} · Generated ${this.formatDateTime(data.generatedAt)}`,
-        MARGIN, 36, { width: CONTENT_WIDTH, align: 'right' },
+        metaX, 35,
+        { width: metaWidth, align: 'right', ellipsis: true },
       );
 
     doc.fillColor(COLOURS.ink);
