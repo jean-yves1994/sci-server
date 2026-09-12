@@ -1,39 +1,13 @@
 import { FieldType, PhotoCategory } from '@prisma/client';
 
-export interface VisibilityRule {
-  field?: string;
-  equals?: unknown;
-  min?: number;
-  max?: number;
-  all?: VisibilityRule[];
-  any?: VisibilityRule[];
-}
-
-export interface FieldValidation {
-  min?: number;
-  max?: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
-  visibleWhen?: VisibilityRule;
-}
-
+export interface VisibilityRule { field?: string; equals?: unknown; min?: number; max?: number; all?: VisibilityRule[]; any?: VisibilityRule[]; }
+export interface FieldValidation { min?: number; max?: number; minLength?: number; maxLength?: number; pattern?: string; visibleWhen?: VisibilityRule; }
 export interface FieldDefinition { id: string; code: string; label: string; type: FieldType; required: boolean; validation?: FieldValidation | null; }
 export interface SectionDefinition { code: string; name: string; isAssessment: boolean; fields: FieldDefinition[]; }
 export interface PhotoRuleDefinition { category: PhotoCategory; minCount: number; required: boolean; }
 export interface SubmittedValue { fieldId: string; valueText?: string | null; valueNumber?: number | null; valueDate?: Date | null; valueBool?: boolean | null; valueJson?: unknown; }
 export interface AssessmentState { categoryCode: string; categoryName: string; rating: number | null; condition: string | null; }
-export interface CompletenessInput {
-  sections: SectionDefinition[];
-  photoRules: PhotoRuleDefinition[];
-  values: SubmittedValue[];
-  fieldCodesById?: Record<string, string>;
-  assessments: AssessmentState[];
-  photoCountsByCategory: Record<string, number>;
-  hasOwner: boolean;
-  hasValuation: boolean;
-  hasLocation: boolean;
-}
+export interface CompletenessInput { sections: SectionDefinition[]; photoRules: PhotoRuleDefinition[]; values: SubmittedValue[]; fieldCodesById?: Record<string, string>; assessments: AssessmentState[]; photoCountsByCategory: Record<string, number>; hasOwner: boolean; hasValuation: boolean; hasLocation: boolean; }
 export interface CompletenessIssue { code: string; sectionCode?: string; fieldCode?: string; message: string; blocking: boolean; }
 export interface CompletenessResult { complete: boolean; percentage: number; issues: CompletenessIssue[]; blockingIssues: CompletenessIssue[]; }
 
@@ -46,7 +20,6 @@ function hasValue(value: SubmittedValue | undefined): boolean {
   if (value.valueJson !== undefined && value.valueJson !== null) return Array.isArray(value.valueJson) ? value.valueJson.length > 0 : true;
   return false;
 }
-
 function rawValue(value: SubmittedValue | undefined): unknown {
   if (!value) return undefined;
   if (value.valueText !== undefined && value.valueText !== null) return value.valueText;
@@ -55,12 +28,10 @@ function rawValue(value: SubmittedValue | undefined): unknown {
   if (value.valueDate !== undefined && value.valueDate !== null) return value.valueDate;
   return value.valueJson;
 }
-
 function sameValue(actual: unknown, expected: unknown): boolean {
   if (Array.isArray(actual)) return actual.map(String).includes(String(expected));
   return String(actual ?? '').toUpperCase() === String(expected ?? '').toUpperCase();
 }
-
 function matchesRule(rule: VisibilityRule | undefined, valuesByCode: Map<string, unknown>): boolean {
   if (!rule) return true;
   if (rule.all && !rule.all.every((r) => matchesRule(r, valuesByCode))) return false;
@@ -73,7 +44,6 @@ function matchesRule(rule: VisibilityRule | undefined, valuesByCode: Map<string,
   }
   return true;
 }
-
 function validateFieldValue(field: FieldDefinition, value: SubmittedValue, sectionCode: string): CompletenessIssue[] {
   const issues: CompletenessIssue[] = [];
   const rules = field.validation;
@@ -86,10 +56,7 @@ function validateFieldValue(field: FieldDefinition, value: SubmittedValue, secti
   if (typeof text === 'string' && text.length > 0) {
     if (rules.minLength !== undefined && text.length < rules.minLength) issues.push({ code: 'TEXT_TOO_SHORT', sectionCode, fieldCode: field.code, message: `${field.label} must be at least ${rules.minLength} characters.`, blocking: true });
     if (rules.maxLength !== undefined && text.length > rules.maxLength) issues.push({ code: 'TEXT_TOO_LONG', sectionCode, fieldCode: field.code, message: `${field.label} must be no more than ${rules.maxLength} characters.`, blocking: true });
-    if (rules.pattern) {
-      let matches = true; try { matches = new RegExp(rules.pattern).test(text); } catch { matches = true; }
-      if (!matches) issues.push({ code: 'PATTERN_MISMATCH', sectionCode, fieldCode: field.code, message: `${field.label} is not in the expected format.`, blocking: true });
-    }
+    if (rules.pattern) { let matches = true; try { matches = new RegExp(rules.pattern).test(text); } catch { matches = true; } if (!matches) issues.push({ code: 'PATTERN_MISMATCH', sectionCode, fieldCode: field.code, message: `${field.label} is not in the expected format.`, blocking: true }); }
   }
   return issues;
 }
@@ -98,24 +65,28 @@ export function evaluateCompleteness(input: CompletenessInput): CompletenessResu
   const issues: CompletenessIssue[] = [];
   const valuesByField = new Map(input.values.map((v) => [v.fieldId, v]));
   const valuesByCode = new Map<string, unknown>();
+  // Prefer the supplied mapping, but derive it from the template as well so
+  // callers cannot accidentally omit fieldCodesById.
+  for (const section of input.sections) for (const field of section.fields) {
+    const value = valuesByField.get(field.id);
+    if (value) valuesByCode.set(field.code, rawValue(value));
+  }
   for (const [id, value] of valuesByField) {
     const code = input.fieldCodesById?.[id];
     if (code) valuesByCode.set(code, rawValue(value));
   }
-  let satisfied = 0;
-  let total = 0;
-  for (const section of input.sections) {
-    for (const field of section.fields) {
-      const rules = field.validation;
-      if (!matchesRule(rules?.visibleWhen, valuesByCode)) continue;
-      const value = valuesByField.get(field.id);
-      if (field.required) {
-        total += 1;
-        if (hasValue(value)) satisfied += 1;
-        else issues.push({ code: 'REQUIRED_FIELD_MISSING', sectionCode: section.code, fieldCode: field.code, message: `${field.label} is required.`, blocking: true });
-      }
-      if (value && hasValue(value)) issues.push(...validateFieldValue(field, value, section.code));
+
+  let satisfied = 0; let total = 0;
+  for (const section of input.sections) for (const field of section.fields) {
+    const rules = field.validation;
+    if (!matchesRule(rules?.visibleWhen, valuesByCode)) continue;
+    const value = valuesByField.get(field.id);
+    if (field.required) {
+      total += 1;
+      if (hasValue(value)) satisfied += 1;
+      else issues.push({ code: 'REQUIRED_FIELD_MISSING', sectionCode: section.code, fieldCode: field.code, message: `${field.label} is required.`, blocking: true });
     }
+    if (value && hasValue(value)) issues.push(...validateFieldValue(field, value, section.code));
   }
   for (const assessment of input.assessments) {
     total += 1;
@@ -129,12 +100,9 @@ export function evaluateCompleteness(input: CompletenessInput): CompletenessResu
     if (count >= rule.minCount) satisfied += 1;
     else issues.push({ code: 'PHOTO_REQUIREMENT_UNMET', sectionCode: 'PHOTOS', message: `${describePhotoCategory(rule.category)} requires ${rule.minCount} photograph(s); ${count} provided.`, blocking: true });
   }
-  total += 1;
-  if (input.hasOwner) satisfied += 1; else issues.push({ code: 'OWNER_MISSING', sectionCode: 'OWNER', message: 'Owner information has not been recorded.', blocking: true });
-  total += 1;
-  if (input.hasValuation) satisfied += 1; else issues.push({ code: 'VALUATION_MISSING', sectionCode: 'VALUATION', message: 'Valuation has not been recorded.', blocking: true });
-  total += 1;
-  if (input.hasLocation) satisfied += 1; else issues.push({ code: 'LOCATION_MISSING', sectionCode: 'LOCATION', message: 'GPS location has not been captured at the property.', blocking: true });
+  total += 1; if (input.hasOwner) satisfied += 1; else issues.push({ code: 'OWNER_MISSING', sectionCode: 'OWNER', message: 'Owner information has not been recorded.', blocking: true });
+  total += 1; if (input.hasValuation) satisfied += 1; else issues.push({ code: 'VALUATION_MISSING', sectionCode: 'VALUATION', message: 'Valuation has not been recorded.', blocking: true });
+  total += 1; if (input.hasLocation) satisfied += 1; else issues.push({ code: 'LOCATION_MISSING', sectionCode: 'LOCATION', message: 'GPS location has not been captured at the property.', blocking: true });
   const blockingIssues = issues.filter((i) => i.blocking);
   return { complete: blockingIssues.length === 0, percentage: total === 0 ? 100 : Math.round((satisfied / total) * 100), issues, blockingIssues };
 }
