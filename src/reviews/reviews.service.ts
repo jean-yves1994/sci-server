@@ -34,7 +34,9 @@ export class ReviewsService {
              u.id AS "reviewerId", u.first_name AS "reviewerFirstName", u.last_name AS "reviewerLastName"
       FROM reviewer_adjustments ra JOIN users u ON u.id = ra.reviewer_id
       WHERE ra.inspection_id = ${id} ORDER BY ra.created_at ASC`;
-    return { inspection, adjustments };
+    const reviewMeta = await this.prisma.$queryRaw<Array<{ reviewerRisk: unknown; reviewerConclusion: string | null; reviewerAdjustedAt: Date | null }>>`
+      SELECT "reviewerRisk", "reviewerConclusion", "reviewerAdjustedAt" FROM inspections WHERE id = ${id}`;
+    return { inspection: { ...inspection, reviewerRisk: reviewMeta[0]?.reviewerRisk ?? null, reviewerConclusion: reviewMeta[0]?.reviewerConclusion ?? null, reviewerAdjustedAt: reviewMeta[0]?.reviewerAdjustedAt ?? null }, adjustments };
   }
 
   private async assertReviewerCanEdit(user: TenantContext, id: string, baseVersion?: number) {
@@ -65,8 +67,8 @@ export class ReviewsService {
     const level = dto.level.trim().toUpperCase();
     if (!['LOW', 'MEDIUM', 'HIGH'].includes(level)) throw new BadRequestError(ErrorCode.VALIDATION_FAILED, 'Risk must be LOW, MEDIUM, or HIGH.');
     await this.prisma.runInTransaction(async tx => {
-      await tx.$executeRaw`UPDATE inspections SET reviewer_risk = ${JSON.stringify({ level, comments: dto.comments?.trim() ?? null })}::jsonb, reviewer_adjusted_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ${id}`;
-      await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_RISK_UPDATED', entityType: 'Inspection', entityId: id, previousValue: undefined, newValue: { level, comments: dto.comments?.trim() ?? null }, meta }, tx);
+      await tx.$executeRaw`UPDATE inspections SET "reviewerRisk" = ${JSON.stringify({ level, comments: dto.comments?.trim() ?? null })}::jsonb, "reviewerAdjustedAt" = CURRENT_TIMESTAMP, version = version + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ${id}`;
+      await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_RISK_UPDATED', entityType: 'Inspection', entityId: id, newValue: { level, comments: dto.comments?.trim() ?? null }, meta }, tx);
     });
     return { id, risk: { level, comments: dto.comments?.trim() ?? null } };
   }
@@ -75,7 +77,7 @@ export class ReviewsService {
     await this.assertReviewerCanEdit(user, id, dto.baseVersion);
     const conclusion = dto.conclusion.trim();
     await this.prisma.runInTransaction(async tx => {
-      await tx.$executeRaw`UPDATE inspections SET reviewer_conclusion = ${conclusion}, reviewer_adjusted_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ${id}`;
+      await tx.$executeRaw`UPDATE inspections SET "reviewerConclusion" = ${conclusion}, "reviewerAdjustedAt" = CURRENT_TIMESTAMP, version = version + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ${id}`;
       await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_CONCLUSION_UPDATED', entityType: 'Inspection', entityId: id, newValue: { conclusion }, meta }, tx);
     });
     return { id, conclusion };
