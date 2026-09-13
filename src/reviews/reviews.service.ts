@@ -50,7 +50,7 @@ export class ReviewsService {
   async addAdjustment(user: TenantContext, id: string, dto: ReviewerAdjustmentDto, meta: RequestMetadata) {
     const inspection = await this.assertReviewerCanEdit(user, id, dto.baseVersion);
     const fieldCode = dto.fieldCode.trim();
-    if (!fieldCode) throw new BadRequestError(ErrorCode.VALIDATION_FAILED, 'Field code is required.');
+    if (!fieldCode) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Field code is required.');
     const existing = inspection.values.find(v => v.field.code === fieldCode);
     const original = existing ? { text: existing.valueText, number: existing.valueNumber?.toString(), date: existing.valueDate, bool: existing.valueBool, json: existing.valueJson } : null;
     const created = await this.prisma.runInTransaction(async tx => {
@@ -63,9 +63,9 @@ export class ReviewsService {
   }
 
   async setRisk(user: TenantContext, id: string, dto: ReviewerRiskDto, meta: RequestMetadata) {
-    const inspection = await this.assertReviewerCanEdit(user, id, dto.baseVersion);
+    await this.assertReviewerCanEdit(user, id, dto.baseVersion);
     const level = dto.level.trim().toUpperCase();
-    if (!['LOW', 'MEDIUM', 'HIGH'].includes(level)) throw new BadRequestError(ErrorCode.VALIDATION_FAILED, 'Risk must be LOW, MEDIUM, or HIGH.');
+    if (!['LOW', 'MEDIUM', 'HIGH'].includes(level)) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Risk must be LOW, MEDIUM, or HIGH.');
     await this.prisma.runInTransaction(async tx => {
       await tx.$executeRaw`UPDATE inspections SET "reviewerRisk" = ${JSON.stringify({ level, comments: dto.comments?.trim() ?? null })}::jsonb, "reviewerAdjustedAt" = CURRENT_TIMESTAMP, version = version + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ${id}`;
       await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_RISK_UPDATED', entityType: 'Inspection', entityId: id, newValue: { level, comments: dto.comments?.trim() ?? null }, meta }, tx);
