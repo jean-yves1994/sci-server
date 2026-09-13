@@ -31,7 +31,7 @@ export class ReviewsService {
     const inspection = await this.getReviewable(user, id);
     const adjustments = await this.prisma.$queryRaw<Array<Record<string, unknown>>>`
       SELECT ra.id, ra.field_code AS "fieldCode", ra.original_value AS "originalValue", ra.adjusted_value AS "adjustedValue", ra.reason, ra.created_at AS "createdAt",
-             u.id AS "reviewerId", u.first_name AS "reviewerFirstName", u.last_name AS "reviewerLastName"
+             u.id AS "reviewerId", u."firstName" AS "reviewerFirstName", u."lastName" AS "reviewerLastName"
       FROM reviewer_adjustments ra JOIN users u ON u.id = ra.reviewer_id
       WHERE ra.inspection_id = ${id} ORDER BY ra.created_at ASC`;
     const reviewMeta = await this.prisma.$queryRaw<Array<{ reviewerRisk: unknown; reviewerConclusion: string | null; reviewerAdjustedAt: Date | null }>>`
@@ -52,11 +52,12 @@ export class ReviewsService {
     const fieldCode = dto.fieldCode.trim();
     if (!fieldCode) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Field code is required.');
     const existing = inspection.values.find(v => v.field.code === fieldCode);
-    const original = existing ? { text: existing.valueText, number: existing.valueNumber?.toString(), date: existing.valueDate, bool: existing.valueBool, json: existing.valueJson } : null;
+    if (!existing) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, `Cannot adjust unknown inspection field: ${fieldCode}.`);
+    const original = { text: existing.valueText, number: existing.valueNumber?.toString(), date: existing.valueDate, bool: existing.valueBool, json: existing.valueJson };
     const created = await this.prisma.runInTransaction(async tx => {
-      const row = await tx.$queryRaw<Array<Record<string, unknown>>>`INSERT INTO reviewer_adjustments (inspection_id, reviewer_id, field_code, original_value, adjusted_value, reason) VALUES (${id}, ${user.userId}, ${fieldCode}, ${original ? JSON.stringify(original) : null}::jsonb, ${JSON.stringify(dto.adjustedValue)}::jsonb, ${dto.reason.trim()}) RETURNING id, field_code AS "fieldCode", original_value AS "originalValue", adjusted_value AS "adjustedValue", reason, created_at AS "createdAt"`;
+      const row = await tx.$queryRaw<Array<Record<string, unknown>>>`INSERT INTO reviewer_adjustments (inspection_id, reviewer_id, field_code, original_value, adjusted_value, reason) VALUES (${id}, ${user.userId}, ${fieldCode}, ${JSON.stringify(original)}::jsonb, ${JSON.stringify(dto.adjustedValue)}::jsonb, ${dto.reason.trim()}) RETURNING id, field_code AS "fieldCode", original_value AS "originalValue", adjusted_value AS "adjustedValue", reason, created_at AS "createdAt"`;
       await tx.inspection.update({ where: { id }, data: { version: { increment: 1 } } });
-      await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_ADJUSTMENT_CREATED', entityType: 'Inspection', entityId: id, previousValue: original ?? undefined, newValue: dto.adjustedValue, metadata: { fieldCode, reason: dto.reason.trim() }, meta }, tx);
+      await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_ADJUSTMENT_CREATED', entityType: 'Inspection', entityId: id, previousValue: original, newValue: dto.adjustedValue, metadata: { fieldCode, reason: dto.reason.trim() }, meta }, tx);
       return row[0];
     });
     return created;
@@ -90,6 +91,17 @@ export class ReviewsService {
     if (baseVersion !== undefined && baseVersion < inspection.version) throw new ConflictError(ErrorCode.INSPECTION_STALE_VERSION, 'This inspection was updated while you were reviewing it. Reload before deciding.', { serverVersion: inspection.version });
     const outcome = evaluateTransition({ action, currentStatus: inspection.status, userId: user.userId, permissions: user.permissions, inspectorId: inspection.inspectorId, submittedById: inspection.inspectorId, reason });
     if (!outcome.allowed) throw new BadRequestError(ErrorCode.INSPECTION_INVALID_TRANSITION, outcome.reason);
+
+    if (action === InspectionAction.APPROVE) {
+      const metaRow = await this.prisma.$queryRaw<Array<{ reviewerRisk: { level?: string } | null; reviewerConclusion: string | null }>>`
+        SELECT "reviewerRisk", "reviewerConclusion" FROM inspections WHERE id = ${id}`;
+      const review = metaRow[0];
+      const riskLevel = review?.reviewerRisk?.level?.toUpperCase();
+      if (!['LOW', 'MEDIUM', 'HIGH'].includes(riskLevel ?? '')) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Set the professional risk classification before approving the inspection.');
+      if (!review?.reviewerConclusion?.trim()) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Enter the professional reviewer conclusion before approving the inspection.');
+      if (!inspection.reviewerId || inspection.reviewerId !== user.userId) throw new ForbiddenError('A professional reviewer must be assigned before approval.', ErrorCode.AUTH_FORBIDDEN);
+    }
+
     await this.prisma.runInTransaction(async tx => {
       await tx.inspection.update({ where: { id }, data: { status: outcome.nextStatus, reviewerId: user.userId, reviewedAt: new Date(), approvedAt: action === InspectionAction.APPROVE ? new Date() : undefined, version: { increment: 1 } } });
       if (reason?.trim()) await tx.inspectionComment.create({ data: { inspectionId: id, authorId: user.userId, body: reason.trim(), type: this.commentTypeFor(action) } });
