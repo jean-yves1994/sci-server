@@ -3,24 +3,16 @@ import { Transform } from 'class-transformer';
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreatePropertyDto {
-  @ApiPropertyOptional({ example: 'PROP-2026-0001', description: 'Optional property reference. If omitted, the backend generates one.' })
-  @IsString() @IsOptional() @MaxLength(40) reference?: string;
-
   @ApiProperty({ example: 'Kigali Commercial Building' })
   @IsString() @IsNotEmpty() @MaxLength(150) name: string;
 
   @ApiProperty({ example: 'Commercial', enum: ['Residential', 'Commercial', 'Industrial', 'Agricultural', 'Land', 'Other'] })
   @IsString() @IsNotEmpty() @MaxLength(30) propertyType: string;
 
-  @ApiProperty({ example: 'John Doe' })
+  @ApiProperty({ example: 'John Doe', description: 'Owner / client name. Used to generate the property reference.' })
   @IsString() @IsNotEmpty() @MaxLength(150) ownerClientName: string;
 
-  @ApiPropertyOptional({ description: 'Optional cadastral parcel number.', example: '1234' })
-  @IsString() @IsOptional() @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  plotNumber?: string;
-
-  @ApiProperty({ description: 'Land title reference (UPI).', example: '1/03/07/04/1234' })
+  @ApiProperty({ description: 'Unique Parcel Identifier (UPI). This is the only land identifier required at property registration.', example: '1/03/07/04/1234' })
   @IsString() @IsNotEmpty() @MaxLength(64)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   titleNumber: string;
@@ -46,11 +38,7 @@ export class UpdatePropertyDto {
   @IsString() @IsOptional() @MaxLength(30) propertyType?: string;
   @ApiPropertyOptional({ example: 'John Doe' })
   @IsString() @IsOptional() @MaxLength(150) ownerClientName?: string;
-  @ApiPropertyOptional({ description: 'Optional cadastral parcel number.', example: '1234' })
-  @IsString() @IsOptional() @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  plotNumber?: string;
-  @ApiPropertyOptional({ description: 'Land title reference (UPI).', example: '1/03/07/04/1234' })
+  @ApiPropertyOptional({ description: 'Unique Parcel Identifier (UPI).' })
   @IsString() @IsOptional() @MaxLength(64)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   titleNumber?: string;
