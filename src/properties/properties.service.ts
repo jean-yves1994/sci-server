@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { randomInt } from 'crypto';
 import { AuditService } from '../audit/audit.service';
 import { PaginatedResult, paginate, PaginationQueryDto } from '../common/dto/pagination.dto';
 import { ConflictError, ForbiddenError, NotFoundError } from '../common/errors/domain.exception';
@@ -20,43 +19,30 @@ export class PropertiesService {
 
   async list(user: TenantContext, query: PaginationQueryDto): Promise<PaginatedResult<unknown>> {
     const scope = buildTenantScope(user);
-
     const where: Prisma.PropertyWhereInput = {
       organizationId: scope.organizationId,
       deletedAt: null,
       ...(scope.branchId ? { branchId: scope.branchId } : {}),
-      ...(query.search
-        ? {
-            OR: [
-              { reference: { contains: query.search, mode: 'insensitive' } },
-              { name: { contains: query.search, mode: 'insensitive' } },
-              { ownerClientName: { contains: query.search, mode: 'insensitive' } },
-              { propertyType: { contains: query.search, mode: 'insensitive' } },
-              { province: { contains: query.search, mode: 'insensitive' } },
-              { district: { contains: query.search, mode: 'insensitive' } },
-              { sector: { contains: query.search, mode: 'insensitive' } },
-              { cell: { contains: query.search, mode: 'insensitive' } },
-              { villageStreet: { contains: query.search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      ...(query.search ? { OR: [
+        { reference: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { ownerClientName: { contains: query.search, mode: 'insensitive' } },
+        { propertyType: { contains: query.search, mode: 'insensitive' } },
+        { titleNumber: { contains: query.search, mode: 'insensitive' } },
+        { province: { contains: query.search, mode: 'insensitive' } },
+        { district: { contains: query.search, mode: 'insensitive' } },
+        { sector: { contains: query.search, mode: 'insensitive' } },
+        { cell: { contains: query.search, mode: 'insensitive' } },
+        { villageStreet: { contains: query.search, mode: 'insensitive' } },
+      ] } : {}),
     };
-
     const [rows, total] = await Promise.all([
       this.prisma.property.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (query.page - 1) * query.pageSize,
-        take: query.pageSize,
-        include: {
-          branch: { select: { id: true, code: true, name: true } },
-          division: { select: { id: true, name: true } },
-          _count: { select: { inspections: true } },
-        },
+        where, orderBy: { createdAt: 'desc' }, skip: (query.page - 1) * query.pageSize, take: query.pageSize,
+        include: { branch: { select: { id: true, code: true, name: true } }, division: { select: { id: true, name: true } }, _count: { select: { inspections: true } } },
       }),
       this.prisma.property.count({ where }),
     ]);
-
     return paginate(rows, total, query.page, query.pageSize);
   }
 
@@ -64,181 +50,84 @@ export class PropertiesService {
     const property = await this.prisma.property.findFirst({
       where: { id, organizationId: user.organizationId, deletedAt: null },
       include: {
-        branch: { select: { id: true, code: true, name: true } },
-        division: true,
-        inspections: {
-          orderBy: { createdAt: 'desc' },
-          take: 20,
-          select: {
-            id: true,
-            inspectionNumber: true,
-            status: true,
-            createdAt: true,
-            loanReference: true,
-          },
-        },
+        branch: { select: { id: true, code: true, name: true } }, division: true,
+        inspections: { orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, inspectionNumber: true, status: true, createdAt: true, loanReference: true } },
       },
     });
-
     if (!property) throw new NotFoundError(ErrorCode.NOT_FOUND, 'Property not found.');
-    if (!canAccessBranch(user, property.branchId)) {
-      throw new ForbiddenError(
-        'This property belongs to a branch you do not have access to.',
-        ErrorCode.AUTH_FORBIDDEN,
-      );
-    }
+    if (!canAccessBranch(user, property.branchId)) throw new ForbiddenError('This property belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
     return property;
   }
 
-  private async generateReference(organizationId: string): Promise<string> {
-    const year = new Date().getFullYear();
+  private normaliseReferenceName(name: string): string {
+    return name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'OWNER';
+  }
 
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const reference = `PROP-${year}-${String(randomInt(0, 10000)).padStart(4, '0')}`;
-      const existing = await this.prisma.property.findFirst({
-        where: { organizationId, reference },
-        select: { id: true },
-      });
-      if (!existing) return reference;
+  private async generateReference(organizationId: string, ownerClientName: string, date = new Date()): Promise<string> {
+    const owner = this.normaliseReferenceName(ownerClientName);
+    const datePart = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const base = `${owner}-${datePart}`;
+    const existing = await this.prisma.property.findFirst({ where: { organizationId, reference: base }, select: { id: true } });
+    if (!existing) return base;
+    // Keep the requested OWNER-YEAR-MONTH-DATE format for the first property;
+    // if the same owner creates another property on the same day, add a short
+    // deterministic suffix so the database reference remains unique.
+    for (let n = 2; n <= 99; n += 1) {
+      const candidate = `${base}-${n}`;
+      const duplicate = await this.prisma.property.findFirst({ where: { organizationId, reference: candidate }, select: { id: true } });
+      if (!duplicate) return candidate;
     }
-
-    throw new ConflictError(
-      ErrorCode.CONFLICT,
-      'Unable to generate a unique property reference. Please try again.',
-    );
+    throw new ConflictError(ErrorCode.CONFLICT, 'Unable to generate a unique property reference for this owner and date.');
   }
 
   async create(user: TenantContext, dto: CreatePropertyDto, meta: RequestMetadata) {
-    // Inspectors use their primary branch automatically. Users who have access
-    // to multiple branches may explicitly provide branchId in the request.
     const branchId = dto.branchId ?? user.primaryBranchId;
-
-    if (!branchId || !canAccessBranch(user, branchId)) {
-      throw new ForbiddenError(
-        'You cannot register a property for that branch.',
-        ErrorCode.AUTH_FORBIDDEN,
-      );
-    }
+    if (!branchId || !canAccessBranch(user, branchId)) throw new ForbiddenError('You cannot register a property for that branch.', ErrorCode.AUTH_FORBIDDEN);
 
     const propertyType = dto.propertyType.trim();
-    if (!PROPERTY_TYPES.includes(propertyType as (typeof PROPERTY_TYPES)[number])) {
-      throw new ConflictError(
-        ErrorCode.BAD_REQUEST,
-        `Property type must be one of: ${PROPERTY_TYPES.join(', ')}.`,
-      );
-    }
+    if (!PROPERTY_TYPES.includes(propertyType as (typeof PROPERTY_TYPES)[number])) throw new ConflictError(ErrorCode.BAD_REQUEST, `Property type must be one of: ${PROPERTY_TYPES.join(', ')}.`);
 
-    const reference =
-      dto.reference?.trim().toUpperCase() || (await this.generateReference(user.organizationId));
-
-    const existing = await this.prisma.property.findFirst({
-      where: { organizationId: user.organizationId, reference },
-    });
-    if (existing) {
-      throw new ConflictError(
-        ErrorCode.CONFLICT,
-        `A property with the reference ${reference} already exists.`,
-      );
-    }
+    const ownerClientName = dto.ownerClientName.trim();
+    const reference = await this.generateReference(user.organizationId, ownerClientName);
+    const existing = await this.prisma.property.findFirst({ where: { organizationId: user.organizationId, reference } });
+    if (existing) throw new ConflictError(ErrorCode.CONFLICT, `A property with the reference ${reference} already exists.`);
 
     const property = await this.prisma.property.create({
       data: {
-        organizationId: user.organizationId,
-        branchId,
-        reference,
-        name: dto.name.trim(),
-        propertyType,
-        ownerClientName: dto.ownerClientName.trim(),
-        province: dto.province.trim(),
-        district: dto.district.trim(),
-        sector: dto.sector.trim(),
-        cell: dto.cell.trim(),
+        organizationId: user.organizationId, branchId, reference,
+        name: dto.name.trim(), propertyType, ownerClientName,
+        province: dto.province.trim(), district: dto.district.trim(), sector: dto.sector.trim(), cell: dto.cell.trim(),
         villageStreet: dto.villageStreet?.trim() || null,
-        plotNumber: dto.plotNumber?.trim() || null,
-        titleNumber: dto.titleNumber?.trim() || null,
+        // plotNumber is a legacy database column and is intentionally not part of the current workflow.
+        plotNumber: null,
+        titleNumber: dto.titleNumber.trim(),
       },
     });
 
-    await this.audit.record({
-      organizationId: user.organizationId,
-      userId: user.userId,
-      action: 'PROPERTY_CREATED',
-      entityType: 'Property',
-      entityId: property.id,
-      newValue: {
-        reference,
-        name: property.name,
-        propertyType: property.propertyType,
-        ownerClientName: property.ownerClientName,
-        province: property.province,
-        district: property.district,
-        sector: property.sector,
-        cell: property.cell,
-        villageStreet: property.villageStreet,
-        plotNumber: property.plotNumber,
-        titleNumber: property.titleNumber,
-      },
-      meta,
-    });
-
+    await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'PROPERTY_CREATED', entityType: 'Property', entityId: property.id,
+      newValue: { reference, name: property.name, propertyType: property.propertyType, ownerClientName: property.ownerClientName, province: property.province, district: property.district, sector: property.sector, cell: property.cell, villageStreet: property.villageStreet, titleNumber: property.titleNumber }, meta });
     return property;
   }
 
   async update(user: TenantContext, id: string, dto: UpdatePropertyDto, meta: RequestMetadata) {
     const before = await this.findOne(user, id);
-
     if (dto.propertyType !== undefined) {
       const propertyType = dto.propertyType.trim();
-      if (!PROPERTY_TYPES.includes(propertyType as (typeof PROPERTY_TYPES)[number])) {
-        throw new ConflictError(
-          ErrorCode.BAD_REQUEST,
-          `Property type must be one of: ${PROPERTY_TYPES.join(', ')}.`,
-        );
-      }
+      if (!PROPERTY_TYPES.includes(propertyType as (typeof PROPERTY_TYPES)[number])) throw new ConflictError(ErrorCode.BAD_REQUEST, `Property type must be one of: ${PROPERTY_TYPES.join(', ')}.`);
     }
-
-    const property = await this.prisma.property.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.propertyType !== undefined ? { propertyType: dto.propertyType.trim() } : {}),
-        ...(dto.ownerClientName !== undefined
-          ? { ownerClientName: dto.ownerClientName.trim() }
-          : {}),
-        ...(dto.province !== undefined ? { province: dto.province.trim() } : {}),
-        ...(dto.district !== undefined ? { district: dto.district.trim() } : {}),
-        ...(dto.sector !== undefined ? { sector: dto.sector.trim() } : {}),
-        ...(dto.cell !== undefined ? { cell: dto.cell.trim() } : {}),
-        ...(dto.villageStreet !== undefined
-          ? { villageStreet: dto.villageStreet.trim() || null }
-          : {}),
-        ...(dto.plotNumber !== undefined ? { plotNumber: dto.plotNumber.trim() || null } : {}),
-        ...(dto.titleNumber !== undefined ? { titleNumber: dto.titleNumber.trim() || null } : {}),
-      },
-    });
-
-    await this.audit.record({
-      organizationId: user.organizationId,
-      userId: user.userId,
-      action: 'PROPERTY_UPDATED',
-      entityType: 'Property',
-      entityId: id,
-      previousValue: {
-        name: before.name,
-        propertyType: before.propertyType,
-        ownerClientName: before.ownerClientName,
-        province: before.province,
-        district: before.district,
-        sector: before.sector,
-        cell: before.cell,
-        villageStreet: before.villageStreet,
-        plotNumber: before.plotNumber,
-        titleNumber: before.titleNumber,
-      },
-      newValue: { ...dto },
-      meta,
-    });
-
+    const property = await this.prisma.property.update({ where: { id }, data: {
+      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+      ...(dto.propertyType !== undefined ? { propertyType: dto.propertyType.trim() } : {}),
+      ...(dto.ownerClientName !== undefined ? { ownerClientName: dto.ownerClientName.trim() } : {}),
+      ...(dto.province !== undefined ? { province: dto.province.trim() } : {}),
+      ...(dto.district !== undefined ? { district: dto.district.trim() } : {}),
+      ...(dto.sector !== undefined ? { sector: dto.sector.trim() } : {}),
+      ...(dto.cell !== undefined ? { cell: dto.cell.trim() } : {}),
+      ...(dto.villageStreet !== undefined ? { villageStreet: dto.villageStreet.trim() || null } : {}),
+      ...(dto.titleNumber !== undefined ? { titleNumber: dto.titleNumber.trim() || null } : {}),
+    } });
+    await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'PROPERTY_UPDATED', entityType: 'Property', entityId: id,
+      previousValue: { name: before.name, propertyType: before.propertyType, ownerClientName: before.ownerClientName, province: before.province, district: before.district, sector: before.sector, cell: before.cell, villageStreet: before.villageStreet, titleNumber: before.titleNumber }, newValue: { ...dto }, meta });
     return property;
   }
 }
