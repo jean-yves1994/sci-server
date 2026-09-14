@@ -154,7 +154,8 @@ export class InspectionsController {
     @ClientMeta() meta: RequestMetadata,
   ) {
     const inspection = await this.inspections.submit(user, id, meta);
-    const draftReport = await this.reports.generateDraft(user, id, meta);
-    return { inspection, draftReport };
+    await this.reports.generateDraft(user, id, meta);
+    // Preserve the original submit response shape for the inspector app/web clients.
+    return inspection;
   }
 }
