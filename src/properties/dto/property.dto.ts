@@ -16,11 +16,6 @@ export class CreatePropertyDto {
   @ApiProperty({ example: 'John Doe', description: 'Owner / client name. Used to generate the property reference.' })
   @IsString() @IsNotEmpty() @MaxLength(150) ownerClientName: string;
 
-  @ApiHideProperty()
-  @IsOptional() @IsString() @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  plotNumber?: string;
-
   @ApiProperty({ description: 'Unique Parcel Identifier (UPI). This is the only land identifier required at property registration.', example: '1/03/07/04/1234' })
   @IsString() @IsNotEmpty() @MaxLength(64)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -47,12 +42,6 @@ export class UpdatePropertyDto {
   @IsString() @IsOptional() @MaxLength(30) propertyType?: string;
   @ApiPropertyOptional({ example: 'John Doe' })
   @IsString() @IsOptional() @MaxLength(150) ownerClientName?: string;
-
-  @ApiHideProperty()
-  @IsOptional() @IsString() @MaxLength(64)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  plotNumber?: string;
-
   @ApiPropertyOptional({ description: 'Unique Parcel Identifier (UPI).' })
   @IsString() @IsOptional() @MaxLength(64)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
