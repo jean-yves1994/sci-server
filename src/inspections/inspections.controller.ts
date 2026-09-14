@@ -2,7 +2,9 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ClientMeta, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { RequestMetadata, TenantContext } from '../common/tenant-context';
+import { ReportsService } from '../reports/reports.service';
 import {
   AssignInspectionDto, CaptureLocationDto, CreateInspectionDto, InspectionQueryDto,
   SaveAssessmentDto, SaveOwnerDto, SaveValuationDto, SaveValuesDto,
@@ -13,7 +15,10 @@ import { InspectionsService } from './inspections.service';
 @ApiBearerAuth()
 @Controller('inspections')
 export class InspectionsController {
-  constructor(private readonly inspections: InspectionsService) {}
+  constructor(
+    private readonly inspections: InspectionsService,
+    private readonly reports: ReportsService,
+  ) {}
 
   @Get()
   @RequirePermissions('inspections.read')
@@ -44,9 +49,6 @@ export class InspectionsController {
     @Body() dto: CreateInspectionDto,
     @ClientMeta() meta: RequestMetadata,
   ) {
-    // An inspector raising their own fieldwork must remain the assignee even
-    // when the role also carries the generic assignment permission. The
-    // service still validates the target inspector and tenant/branch access.
     const isInspector = user.roles.some(
       (role) => role.trim().toLowerCase() === 'inspector',
     );
@@ -145,12 +147,14 @@ export class InspectionsController {
 
   @Post(':id/submit')
   @RequirePermissions('inspections.write')
-  @ApiOperation({ summary: 'Submit or resubmit for review; completeness is re-checked' })
-  submit(
+  @ApiOperation({ summary: 'Submit or resubmit for review; a draft PDF is created automatically' })
+  async submit(
     @CurrentUser() user: TenantContext,
     @Param('id', ParseUUIDPipe) id: string,
     @ClientMeta() meta: RequestMetadata,
   ) {
-    return this.inspections.submit(user, id, meta);
+    const inspection = await this.inspections.submit(user, id, meta);
+    const draftReport = await this.reports.generateDraft(user, id, meta);
+    return { inspection, draftReport };
   }
 }
