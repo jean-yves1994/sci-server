@@ -19,6 +19,17 @@ export class ReportsController {
     return this.reports.list(user, query);
   }
 
+  @Post('inspections/:id/draft-report')
+  @RequirePermissions('reports.generate')
+  @ApiOperation({ summary: 'Create the draft PDF for a submitted inspection if it does not already exist' })
+  draft(
+    @CurrentUser() user: TenantContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @ClientMeta() meta: RequestMetadata,
+  ) {
+    return this.reports.generateDraft(user, id, meta);
+  }
+
   @Post('inspections/:id/report')
   @RequirePermissions('reports.generate')
   @ApiOperation({ summary: 'Generate (or regenerate as a new version) the official PDF' })
