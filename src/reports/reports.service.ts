@@ -31,7 +31,13 @@ export class ReportsService {
       throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
     }
 
-    if (![InspectionStatus.SUBMITTED, InspectionStatus.UNDER_REVIEW, InspectionStatus.RESUBMITTED].includes(inspection.status)) {
+    const draftStatuses: InspectionStatus[] = [
+      InspectionStatus.SUBMITTED,
+      InspectionStatus.UNDER_REVIEW,
+      InspectionStatus.RESUBMITTED,
+    ];
+
+    if (!draftStatuses.includes(inspection.status)) {
       throw new BadRequestError(
         ErrorCode.REPORT_NOT_READY,
         'A draft report can only be generated after the inspection has been submitted.',
@@ -115,7 +121,7 @@ export class ReportsService {
     const storageKey = `reports/${inspection.organizationId}/${reportNumber}-v${version}.pdf`;
     const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
     return this.prisma.runInTransaction(async (tx) => {
-      const created = await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
+      const created = await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
       await tx.inspection.update({ where: { id: inspectionId }, data: { status: InspectionStatus.REPORT_GENERATED, version: { increment: 1 } } });
       await tx.inspectionStatusEvent.create({ data: { inspectionId, fromStatus: inspection.status, toStatus: InspectionStatus.REPORT_GENERATED, actorId: user.userId, comment: `Report ${reportNumber} version ${version} generated.` } });
       if (inspection.inspectorId) await this.notifications.create({ userId: inspection.inspectorId, type: 'REPORT_READY', title: 'Report available', message: `The official report for ${inspection.inspectionNumber} is ready to download.`, entityType: 'Report', entityId: created.id }, tx);
