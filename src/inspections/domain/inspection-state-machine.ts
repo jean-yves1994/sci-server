@@ -199,7 +199,7 @@ export function evaluateTransition(ctx: TransitionContext): TransitionOutcome {
     return {
       allowed: false,
       code: 'REASON_REQUIRED',
-      reason: 'A written reason is required for this action.',
+      reason: 'The written reason is required for this action.',
     };
   }
 
