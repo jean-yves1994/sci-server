@@ -27,84 +27,26 @@ export class ReportsService {
 
   async generateDraft(user: TenantContext, inspectionId: string, meta: RequestMetadata) {
     const inspection = await this.loadForReport(user.organizationId, inspectionId);
-    if (!inspection) {
-      throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
-    }
-
-    const draftStatuses: InspectionStatus[] = [
-      InspectionStatus.SUBMITTED,
-      InspectionStatus.UNDER_REVIEW,
-      InspectionStatus.RESUBMITTED,
-    ];
-
-    if (!draftStatuses.includes(inspection.status)) {
-      throw new BadRequestError(
-        ErrorCode.REPORT_NOT_READY,
-        'A draft report can only be generated after the inspection has been submitted.',
-      );
-    }
-
-    if (!canAccessBranch(user, inspection.branchId)) {
-      throw new ForbiddenError(
-        'This inspection belongs to a branch you do not have access to.',
-        ErrorCode.AUTH_FORBIDDEN,
-      );
-    }
+    if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+    const draftStatuses: InspectionStatus[] = [InspectionStatus.SUBMITTED, InspectionStatus.UNDER_REVIEW, InspectionStatus.RESUBMITTED];
+    if (!draftStatuses.includes(inspection.status)) throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'A draft report can only be generated after the inspection has been submitted.');
+    if (!canAccessBranch(user, inspection.branchId)) throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
 
     const submissionRound = Math.max(inspection.submissionCount, 1);
     const reportNumber = this.buildDraftReportNumber(inspection.inspectionNumber, submissionRound);
-    const existing = await this.prisma.report.findFirst({
-      where: { organizationId: inspection.organizationId, inspectionId, reportNumber },
-      orderBy: { version: 'desc' },
-    });
-
+    const existing = await this.prisma.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber }, orderBy: { version: 'desc' } });
     if (existing) return existing;
 
     const version = 1;
-    const pdf = await this.renderer.render(
-      this.toReportData(inspection, reportNumber, version, user),
-    );
+    const pdf = await this.renderer.render(this.toReportData(inspection, reportNumber, version, user));
     const storageKey = `reports/${inspection.organizationId}/drafts/${reportNumber}-v${version}.pdf`;
     const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
 
     return this.prisma.runInTransaction(async (tx) => {
-      const duplicate = await tx.report.findFirst({
-        where: { organizationId: inspection.organizationId, inspectionId, reportNumber },
-      });
+      const duplicate = await tx.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber } });
       if (duplicate) return duplicate;
-
-      const created = await tx.report.create({
-        data: {
-          organizationId: inspection.organizationId,
-          inspectionId,
-          reportNumber,
-          version,
-          storageKey: stored.key,
-          checksumSha256: stored.checksumSha256,
-          sizeBytes: stored.sizeBytes,
-          generatedById: user.userId,
-        },
-      });
-
-      await this.audit.record(
-        {
-          organizationId: inspection.organizationId,
-          userId: user.userId,
-          action: 'DRAFT_REPORT_GENERATED',
-          entityType: 'Report',
-          entityId: created.id,
-          metadata: {
-            reportNumber,
-            version,
-            inspectionNumber: inspection.inspectionNumber,
-            submissionRound,
-            checksum: stored.checksumSha256,
-          },
-          meta,
-        },
-        tx,
-      );
-
+      const created = await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
+      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'DRAFT_REPORT_GENERATED', entityType: 'Report', entityId: created.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, submissionRound, checksum: stored.checksumSha256 }, meta }, tx);
       return created;
     });
   }
@@ -114,18 +56,30 @@ export class ReportsService {
     if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
     const outcome = evaluateTransition({ action: InspectionAction.GENERATE_REPORT, currentStatus: inspection.status, userId: user.userId, permissions: user.permissions, inspectorId: inspection.inspectorId, submittedById: null });
     if (!outcome.allowed) throw new BadRequestError(ErrorCode.REPORT_NOT_READY, outcome.reason);
+
+    // There is one authoritative final report per inspection. Regeneration replaces
+    // its PDF and metadata in place instead of creating another version in the UI.
     const reportNumber = this.buildReportNumber(inspection.inspectionNumber);
-    const existingCount = await this.prisma.report.count({ where: { inspectionId, reportNumber } });
-    const version = existingCount + 1;
+    const version = 1;
     const pdf = await this.renderer.render(this.toReportData(inspection, reportNumber, version, user));
     const storageKey = `reports/${inspection.organizationId}/${reportNumber}-v${version}.pdf`;
     const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
+
     return this.prisma.runInTransaction(async (tx) => {
-      const created = await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
+      const existing = await tx.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber }, orderBy: { generatedAt: 'desc' } });
+      const report = existing
+        ? await tx.report.update({ where: { id: existing.id }, data: { version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId, generatedAt: new Date() } })
+        : await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
+
+      // If historical duplicate final rows exist, remove them so the inspection
+      // and reports dashboard expose exactly one current final report.
+      await tx.report.deleteMany({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber, NOT: { id: report.id } } });
+
       await tx.inspection.update({ where: { id: inspectionId }, data: { status: InspectionStatus.REPORT_GENERATED, version: { increment: 1 } } });
-      await tx.inspectionStatusEvent.create({ data: { inspectionId, fromStatus: inspection.status, toStatus: InspectionStatus.REPORT_GENERATED, actorId: user.userId, comment: `Report ${reportNumber} version ${version} generated.` } });
-      if (inspection.inspectorId) await this.notifications.create({ userId: inspection.inspectorId, type: 'REPORT_READY', title: 'Report available', message: `The official report for ${inspection.inspectionNumber} is ready to download.`, entityType: 'Report', entityId: created.id }, tx);
-      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'REPORT_GENERATED', entityType: 'Report', entityId: created.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, checksum: stored.checksumSha256 }, meta }, tx); return created;
+      await tx.inspectionStatusEvent.create({ data: { inspectionId, fromStatus: inspection.status, toStatus: InspectionStatus.REPORT_GENERATED, actorId: user.userId, comment: `Report ${reportNumber} generated.` } });
+      if (inspection.inspectorId) await this.notifications.create({ userId: inspection.inspectorId, type: 'REPORT_READY', title: 'Report available', message: `The official report for ${inspection.inspectionNumber} is ready to download.`, entityType: 'Report', entityId: report.id }, tx);
+      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'REPORT_GENERATED', entityType: 'Report', entityId: report.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, checksum: stored.checksumSha256, regenerated: Boolean(existing) }, meta }, tx);
+      return report;
     });
   }
 
@@ -144,40 +98,15 @@ export class ReportsService {
   private async loadForReport(organizationId: string, id: string) {
     const inspection = await this.prisma.inspection.findFirst({ where: { id, organizationId, deletedAt: null }, include: { organization: true, branch: true, property: { include: { division: true } }, owner: true, valuation: true, inspector: { select: { firstName: true, lastName: true } }, reviewer: { select: { firstName: true, lastName: true } }, assessments: { orderBy: { sortOrder: 'asc' } }, locations: { orderBy: { capturedAt: 'desc' }, take: 1 }, photos: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } }, values: { include: { field: { include: { section: true } } } }, comments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { firstName: true, lastName: true } } } }, statusEvents: { orderBy: { createdAt: 'asc' }, include: { actor: { select: { firstName: true, lastName: true } } } } } });
     if (!inspection) return null;
-    const reviewerValuation = await this.prisma.$queryRaw<Array<{
-      id: string;
-      inspectionId: string;
-      reviewerId: string;
-      currency: string;
-      marketValue: unknown;
-      forcedSaleValue: unknown;
-      replacementCost: unknown;
-      rentalEstimate: unknown;
-      comments: string | null;
-      createdAt: Date;
-      updatedAt: Date;
-    }>>`
-      SELECT id,
-             inspection_id AS "inspectionId",
-             reviewer_id AS "reviewerId",
-             currency,
-             market_value AS "marketValue",
-             forced_sale_value AS "forcedSaleValue",
-             replacement_cost AS "replacementCost",
-             rental_estimate AS "rentalEstimate",
-             comments,
-             created_at AS "createdAt",
-             updated_at AS "updatedAt"
-      FROM reviewer_valuations
-      WHERE inspection_id = ${id}
-      LIMIT 1
+    const reviewerValuation = await this.prisma.$queryRaw<Array<{ id: string; inspectionId: string; reviewerId: string; currency: string; marketValue: unknown; forcedSaleValue: unknown; replacementCost: unknown; rentalEstimate: unknown; comments: string | null; createdAt: Date; updatedAt: Date; }>>`
+      SELECT id, inspection_id AS "inspectionId", reviewer_id AS "reviewerId", currency, market_value AS "marketValue", forced_sale_value AS "forcedSaleValue", replacement_cost AS "replacementCost", rental_estimate AS "rentalEstimate", comments, created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM reviewer_valuations WHERE inspection_id = ${id} LIMIT 1
     `;
     return { ...inspection, reviewerValuation: reviewerValuation[0] ?? null };
   }
 
   private toReportData(inspection: NonNullable<Awaited<ReturnType<ReportsService['loadForReport']>>>, reportNumber: string, version: number, user: TenantContext): ReportData {
-    const location = inspection.locations[0]; const fieldValues = inspection.values.map((value) => ({ section: value.field.section.name, sortOrder: value.field.sortOrder, label: value.field.label, value: this.stringifyValue(value) })).filter((entry) => entry.value !== '').sort((a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder); const propertyAddress = [inspection.property.villageStreet, inspection.property.cell, inspection.property.sector, inspection.property.district, inspection.property.province].filter((value): value is string => Boolean(value?.trim())).join(', ');
-    const valuation = inspection.reviewerValuation ?? inspection.valuation;
+    const location = inspection.locations[0]; const fieldValues = inspection.values.map((value) => ({ section: value.field.section.name, sortOrder: value.field.sortOrder, label: value.field.label, value: this.stringifyValue(value) })).filter((entry) => entry.value !== '').sort((a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder); const propertyAddress = [inspection.property.villageStreet, inspection.property.cell, inspection.property.sector, inspection.property.district, inspection.property.province].filter((value): value is string => Boolean(value?.trim())).join(', '); const valuation = inspection.reviewerValuation ?? inspection.valuation;
     return { organization: { name: inspection.organization.name, legalName: inspection.organization.legalName, addressLine: inspection.organization.addressLine, phone: inspection.organization.phone, email: inspection.organization.email }, reportNumber, version, generatedAt: new Date(), generatedBy: user.userId, inspection: { inspectionNumber: inspection.inspectionNumber, loanReference: inspection.loanReference, clientName: inspection.clientName, status: inspection.status, submittedAt: inspection.submittedAt, approvedAt: inspection.approvedAt, branch: `${inspection.branch.code} — ${inspection.branch.name}` }, property: { reference: inspection.property.reference, propertyType: inspection.property.propertyType, addressLine: propertyAddress || inspection.property.addressLine || '—', plotNumber: null, titleNumber: inspection.property.titleNumber, division: inspection.property.division?.name ?? null }, owner: inspection.owner ? { fullName: inspection.owner.fullName, phone: inspection.owner.phone, email: inspection.owner.email, occupancyStatus: inspection.owner.occupancyStatus, ownershipType: inspection.owner.ownershipType } : null, people: { inspector: inspection.inspector ? `${inspection.inspector.firstName} ${inspection.inspector.lastName}` : null, reviewer: inspection.reviewer ? `${inspection.reviewer.firstName} ${inspection.reviewer.lastName}` : null }, location: location ? { latitude: Number(location.latitude), longitude: Number(location.longitude), accuracyM: location.accuracyM, capturedAt: location.capturedAt, distanceFromPropertyM: location.distanceFromPropertyM } : null, assessments: inspection.assessments.map((a) => ({ categoryName: a.categoryName, rating: a.rating, condition: a.condition, notes: a.notes })), valuation: valuation ? { currency: valuation.currency, marketValue: valuation.marketValue === null ? null : Number(valuation.marketValue), forcedSaleValue: valuation.forcedSaleValue === null ? null : Number(valuation.forcedSaleValue), replacementCost: valuation.replacementCost === null ? null : Number(valuation.replacementCost), rentalEstimate: valuation.rentalEstimate === null ? null : Number(valuation.rentalEstimate), comments: valuation.comments } : null, fieldValues: fieldValues.map(({ section, label, value }) => ({ section, label, value })), photos: inspection.photos.map((p) => ({ category: p.category, storageKey: p.storageKey, caption: p.caption, capturedAt: p.capturedAt })), reviewerComments: inspection.comments.map((c) => ({ author: `${c.author.firstName} ${c.author.lastName}`, body: c.body, createdAt: c.createdAt, type: c.type })), timeline: inspection.statusEvents.map((e) => ({ toStatus: e.toStatus, actor: e.actor ? `${e.actor.firstName} ${e.actor.lastName}` : null, createdAt: e.createdAt, comment: e.comment })) };
   }
 
