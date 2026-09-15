@@ -90,6 +90,26 @@ export class ReportsService {
     const report = await this.prisma.report.findFirst({ where: { id: reportId, organizationId: user.organizationId }, include: { inspection: { select: { branchId: true, inspectionNumber: true } } } });
     if (!report) throw new NotFoundError(ErrorCode.NOT_FOUND, 'Report not found.');
     if (!canAccessBranch(user, report.inspection.branchId)) throw new ForbiddenError('This report belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
+
+    // A final report is an official snapshot of the approved inspection. Never serve an old
+    // stored PDF when the inspection has since been corrected/resubmitted and approved again.
+    // Regenerate the final artifact from the live inspection immediately before download.
+    if (!report.reportNumber.startsWith('DRF-')) {
+      const live = await this.loadForReport(user.organizationId, report.inspectionId);
+      if (!live) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+      if (![InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED].includes(live.status)) {
+        throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'The final report can only be downloaded for an approved inspection.');
+      }
+      const generatedByName = await this.generatedByName(report.generatedById);
+      const version = report.version + 1;
+      const pdf = await this.renderer.render(this.toReportData(live, report.reportNumber, version, generatedByName));
+      const storageKey = `reports/${live.organizationId}/${report.reportNumber}-v${version}.pdf`;
+      const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
+      await this.prisma.report.update({ where: { id: report.id }, data: { version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedAt: new Date() } });
+      report.version = version;
+      report.storageKey = stored.key;
+    }
+
     const url = await this.storage.getSignedUrl(report.storageKey, DOWNLOAD_TTL_SECONDS, disposition);
     await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REPORT_DOWNLOADED', entityType: 'Report', entityId: report.id, metadata: { reportNumber: report.reportNumber, disposition, version: report.version }, meta });
     return { url, expiresIn: DOWNLOAD_TTL_SECONDS, reportNumber: report.reportNumber };
