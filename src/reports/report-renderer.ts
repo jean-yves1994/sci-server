@@ -43,7 +43,8 @@ export class ReportRenderer {
     this.location(doc, data);
     this.fields(doc, data);
     this.assessments(doc, data);
-    this.valuation(doc, data);
+    // Valuation is intentionally excluded from the final report. Draft reports
+    // may still expose valuation data through the underlying report data model.
     await this.photos(doc, data);
     this.approval(doc, data);
     this.pageNumbers(doc, data);
@@ -113,10 +114,11 @@ export class ReportRenderer {
   }
 
   private fields(doc: PDFKit.PDFDocument, data: ReportData) {
-    if (!data.fieldValues.length) return;
+    const visible = data.fieldValues.filter(e => !this.isLegacyPlotNumber(e));
+    if (!visible.length) return;
     this.section(doc, 'Recorded information');
     let current = '';
-    for (const e of data.fieldValues) {
+    for (const e of visible) {
       this.ensure(doc, 34);
       if (e.section !== current) {
         current = e.section;
@@ -125,6 +127,11 @@ export class ReportRenderer {
       }
       this.kv(doc, [[e.label, e.value]]);
     }
+  }
+
+  private isLegacyPlotNumber(e: { section: string; label: string; value: string }) {
+    const normalized = `${e.section} ${e.label}`.toLowerCase().replace(/[_-]+/g, ' ');
+    return /\bplot\s*(number|no|num)\b/.test(normalized) || normalized.includes('plot no.');
   }
 
   private assessments(doc: PDFKit.PDFDocument, data: ReportData) {
@@ -155,21 +162,6 @@ export class ReportRenderer {
       doc.moveTo(MARGIN, bottom + 5).lineTo(MARGIN + CONTENT_WIDTH, bottom + 5).strokeColor(C.rule).lineWidth(0.4).stroke();
       doc.y = bottom + 11;
     }
-  }
-
-  private valuation(doc: PDFKit.PDFDocument, data: ReportData) {
-    this.section(doc, 'Valuation');
-    if (!data.valuation) {
-      this.note(doc, 'No valuation was recorded.');
-      return;
-    }
-    const v = data.valuation;
-    const rows: Array<[string, string]> = [];
-    if (v.landValue !== null) rows.push(['Land value', this.money(v.landValue, v.currency)]);
-    if (v.mainBuildingValue !== null) rows.push(['Main building value', this.money(v.mainBuildingValue, v.currency)]);
-    rows.push(['Total estimated value', this.money(v.totalEstimatedValue, v.currency)]);
-    this.kv(doc, rows);
-    // Deliberately omit valuation/reviewer comments from the final report.
   }
 
   private async photos(doc: PDFKit.PDFDocument, data: ReportData) {
@@ -261,10 +253,6 @@ export class ReportRenderer {
   private human(v: string | null) {
     if (!v) return '—';
     return v.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }
-
-  private money(v: number | null, c: string) {
-    return v === null ? '—' : `${c} ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   private dt(v: Date) {
