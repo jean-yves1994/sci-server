@@ -2,17 +2,28 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Patch } from 
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ClientMeta, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
-import { RequestMetadata, TenantContext } from '../common/tenant-context';
+import { RequestMetadata, TenantContext, canAccessBranch } from '../common/tenant-context';
 import { InspectionQueryDto } from '../inspections/dto/inspection.dto';
 import { InspectionsService } from '../inspections/inspections.service';
+import { PrismaService } from '../database/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { ApproveDto, CommentDto, DecisionDto, ReviewerAdjustmentDto, ReviewerConclusionDto, ReviewerRiskDto } from './dto/review.dto';
+import { SaveValuationDto } from '../inspections/dto/inspection.dto';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../common/errors/domain.exception';
+import { ErrorCode } from '../common/errors/error-codes';
+import { InspectionStatus } from '@prisma/client';
 import { ReviewsService } from './reviews.service';
 
 @ApiTags('Reviews')
 @ApiBearerAuth()
 @Controller()
 export class ReviewsController {
-  constructor(private readonly reviews: ReviewsService, private readonly inspections: InspectionsService) {}
+  constructor(
+    private readonly reviews: ReviewsService,
+    private readonly inspections: InspectionsService,
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Get('reviews/queue')
   @RequirePermissions('reviews.read')
@@ -31,6 +42,97 @@ export class ReviewsController {
   @Post('inspections/:id/review/adjustments')
   @RequirePermissions('reviews.decide')
   addAdjustment(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReviewerAdjustmentDto, @ClientMeta() meta: RequestMetadata) { return this.reviews.addAdjustment(user, id, dto, meta); }
+
+  @Patch('inspections/:id/review/valuation')
+  @RequirePermissions('reviews.decide')
+  @ApiOperation({ summary: 'Set the professional valuation and valuation comments during review' })
+  async saveReviewerValuation(
+    @CurrentUser() user: TenantContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SaveValuationDto,
+    @ClientMeta() meta: RequestMetadata,
+  ) {
+    const inspection = await this.prisma.inspection.findFirst({
+      where: { id, organizationId: user.organizationId, deletedAt: null },
+      select: { id: true, branchId: true, status: true, version: true, reviewerId: true },
+    });
+
+    if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+    if (!canAccessBranch(user, inspection.branchId)) {
+      throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
+    }
+    if (inspection.reviewerId && inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Only the reviewer who claimed this inspection can modify the professional valuation.', ErrorCode.AUTH_FORBIDDEN);
+    }
+    if (!inspection.reviewerId) {
+      throw new ForbiddenError('Claim the inspection for review before entering the professional valuation.', ErrorCode.AUTH_FORBIDDEN);
+    }
+
+    const editableStatuses: InspectionStatus[] = [
+      InspectionStatus.UNDER_REVIEW,
+      InspectionStatus.SUBMITTED,
+      InspectionStatus.RESUBMITTED,
+    ];
+    if (!editableStatuses.includes(inspection.status)) {
+      throw new BadRequestError(ErrorCode.INSPECTION_INVALID_TRANSITION, 'Professional valuation is only editable while the inspection is awaiting review.');
+    }
+    if (dto.baseVersion !== undefined && dto.baseVersion < inspection.version) {
+      throw new ConflictError(
+        ErrorCode.INSPECTION_STALE_VERSION,
+        'This inspection changed while you were reviewing it. Reload before making changes.',
+        { serverVersion: inspection.version },
+      );
+    }
+
+    const valuation = await this.prisma.runInTransaction(async (tx) => {
+      const result = await tx.inspectionValuation.upsert({
+        where: { inspectionId: id },
+        update: {
+          currency: dto.currency?.trim().toUpperCase() || 'RWF',
+          marketValue: dto.marketValue ?? null,
+          forcedSaleValue: dto.forcedSaleValue ?? null,
+          replacementCost: dto.replacementCost ?? null,
+          rentalEstimate: dto.rentalEstimate ?? null,
+          comments: dto.comments?.trim() || null,
+        },
+        create: {
+          inspectionId: id,
+          currency: dto.currency?.trim().toUpperCase() || 'RWF',
+          marketValue: dto.marketValue ?? null,
+          forcedSaleValue: dto.forcedSaleValue ?? null,
+          replacementCost: dto.replacementCost ?? null,
+          rentalEstimate: dto.rentalEstimate ?? null,
+          comments: dto.comments?.trim() || null,
+        },
+      });
+
+      await tx.inspection.update({
+        where: { id },
+        data: { reviewerAdjustedAt: new Date(), version: { increment: 1 } },
+      });
+
+      await this.audit.record({
+        organizationId: user.organizationId,
+        userId: user.userId,
+        action: 'REVIEWER_VALUATION_UPDATED',
+        entityType: 'Inspection',
+        entityId: id,
+        newValue: {
+          currency: dto.currency?.trim().toUpperCase() || 'RWF',
+          marketValue: dto.marketValue ?? null,
+          forcedSaleValue: dto.forcedSaleValue ?? null,
+          replacementCost: dto.replacementCost ?? null,
+          rentalEstimate: dto.rentalEstimate ?? null,
+          comments: dto.comments?.trim() || null,
+        },
+        meta,
+      }, tx);
+
+      return result;
+    });
+
+    return valuation;
+  }
 
   @Patch('inspections/:id/review/risk')
   @RequirePermissions('reviews.decide')
