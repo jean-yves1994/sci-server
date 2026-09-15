@@ -22,13 +22,9 @@ export class ReportsService {
     const inspection = await this.loadForReport(user.organizationId, inspectionId);
     if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
 
-    const statuses: InspectionStatus[] = [InspectionStatus.SUBMITTED, InspectionStatus.UNDER_REVIEW, InspectionStatus.RESUBMITTED];
-    if (!statuses.includes(inspection.status)) {
-      throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'A draft report can only be generated after the inspection has been submitted.');
-    }
-    if (!canAccessBranch(user, inspection.branchId)) {
-      throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
-    }
+    const statuses: InspectionStatus[] = [InspectionStatus.SUBMITTED, InspectionStatus.UNDER_REVIEW, InspectionStatus.RESUBMITTED, InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED];
+    if (!statuses.includes(inspection.status)) throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'A draft report can only be generated after the inspection has been submitted.');
+    if (!canAccessBranch(user, inspection.branchId)) throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
 
     const round = Math.max(inspection.submissionCount, 1);
     const reportNumber = this.buildDraftReportNumber(inspection.inspectionNumber, round);
@@ -44,7 +40,9 @@ export class ReportsService {
       const report = current
         ? await tx.report.update({ where: { id: current.id }, data: { version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId, generatedAt: new Date() } })
         : await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
-      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'DRAFT_REPORT_GENERATED', entityType: 'Report', entityId: report.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, submissionRound: round, checksum: stored.checksumSha256, regenerated: Boolean(current) }, meta }, tx);
+
+      await tx.report.deleteMany({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber, NOT: { id: report.id } } });
+      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'DRAFT_REPORT_GENERATED', entityType: 'Report', entityId: report.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, submissionRound: round, checksum: stored.checksumSha256, regenerated: Boolean(current), inspectionStatusAtGeneration: inspection.status }, meta }, tx);
       return report;
     });
   }
@@ -65,6 +63,16 @@ export class ReportsService {
     const storageKey = `reports/${inspection.organizationId}/${reportNumber}-v${version}.pdf`;
     const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
 
+    // Once an inspection is approved, keep the draft and official PDFs based on
+    // the same approved inspection snapshot. This prevents the draft from
+    // continuing to show values that were changed before approval.
+    const draftReportNumber = this.buildDraftReportNumber(inspection.inspectionNumber, Math.max(inspection.submissionCount, 1));
+    const existingDraft = await this.prisma.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber: draftReportNumber }, orderBy: { version: 'desc' } });
+    const draftVersion = (existingDraft?.version ?? 0) + 1;
+    const draftPdf = await this.renderer.render(this.toReportData(inspection, draftReportNumber, draftVersion, generatedByName));
+    const draftStorageKey = `reports/${inspection.organizationId}/drafts/${draftReportNumber}-v${draftVersion}.pdf`;
+    const draftStored = await this.storage.put(draftStorageKey, draftPdf, 'application/pdf');
+
     return this.prisma.runInTransaction(async (tx) => {
       const current = await tx.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber }, orderBy: { version: 'desc' } });
       const report = current
@@ -73,12 +81,18 @@ export class ReportsService {
 
       await tx.report.deleteMany({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber, NOT: { id: report.id } } });
 
+      const currentDraft = await tx.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber: draftReportNumber }, orderBy: { version: 'desc' } });
+      const draftReport = currentDraft
+        ? await tx.report.update({ where: { id: currentDraft.id }, data: { version: draftVersion, storageKey: draftStored.key, checksumSha256: draftStored.checksumSha256, sizeBytes: draftStored.sizeBytes, generatedById: user.userId, generatedAt: new Date() } })
+        : await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber: draftReportNumber, version: draftVersion, storageKey: draftStored.key, checksumSha256: draftStored.checksumSha256, sizeBytes: draftStored.sizeBytes, generatedById: user.userId } });
+      await tx.report.deleteMany({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber: draftReportNumber, NOT: { id: draftReport.id } } });
+
       const statusUpdate = await tx.inspection.updateMany({ where: { id: inspectionId, status: { not: InspectionStatus.REPORT_GENERATED } }, data: { status: InspectionStatus.REPORT_GENERATED, version: { increment: 1 } } });
       if (statusUpdate.count > 0) {
         await tx.inspectionStatusEvent.create({ data: { inspectionId, fromStatus: inspection.status, toStatus: InspectionStatus.REPORT_GENERATED, actorId: user.userId, comment: `Report ${reportNumber} generated from the latest approved inspection data.` } });
         if (inspection.inspectorId) await this.notifications.create({ userId: inspection.inspectorId, type: 'REPORT_READY', title: 'Report available', message: `The official report for ${inspection.inspectionNumber} is ready to download.`, entityType: 'Report', entityId: report.id }, tx);
       }
-      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'REPORT_GENERATED', entityType: 'Report', entityId: report.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, inspectionStatusAtGeneration: inspection.status, checksum: stored.checksumSha256, regenerated: Boolean(current) }, meta }, tx);
+      await this.audit.record({ organizationId: inspection.organizationId, userId: user.userId, action: 'REPORT_GENERATED', entityType: 'Report', entityId: report.id, metadata: { reportNumber, version, inspectionNumber: inspection.inspectionNumber, inspectionStatusAtGeneration: inspection.status, checksum: stored.checksumSha256, draftReportId: draftReport.id, draftChecksum: draftStored.checksumSha256, regenerated: Boolean(current) }, meta }, tx);
       return report;
     });
   }
