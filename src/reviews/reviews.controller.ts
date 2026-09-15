@@ -105,10 +105,15 @@ export class ReviewsController {
         },
       });
 
-      await tx.inspection.update({
-        where: { id },
-        data: { version: { increment: 1 } },
-      });
+      // Keep the existing reviewer metadata column in sync without relying on
+      // Prisma Client to know about this legacy/raw-SQL field.
+      await tx.$executeRaw`
+        UPDATE inspections
+        SET "reviewerAdjustedAt" = CURRENT_TIMESTAMP,
+            version = version + 1,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE id = ${id}
+      `;
 
       await this.audit.record({
         organizationId: user.organizationId,
