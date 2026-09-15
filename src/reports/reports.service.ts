@@ -33,12 +33,36 @@ export class ReportsService {
     const inspection=await this.loadForReport(user.organizationId,inspectionId);if(!inspection)throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND,'Inspection not found.');
     const outcome=evaluateTransition({action:InspectionAction.GENERATE_REPORT,currentStatus:inspection.status,userId:user.userId,permissions:user.permissions,inspectorId:inspection.inspectorId,submittedById:null});if(!outcome.allowed)throw new BadRequestError(ErrorCode.REPORT_NOT_READY,outcome.reason);
     const reportNumber=this.buildReportNumber(inspection.inspectionNumber),version=1,generatedByName=await this.generatedByName(user.userId);const pdf=await this.renderer.render(this.toReportData(inspection,reportNumber,version,generatedByName));const storageKey=`reports/${inspection.organizationId}/${reportNumber}-v${version}.pdf`;const stored=await this.storage.put(storageKey,pdf,'application/pdf');
-    return this.prisma.runInTransaction(async(tx)=>{const existing=await tx.report.findFirst({where:{organizationId:inspection.organizationId,inspectionId,reportNumber},orderBy:{generatedAt:'desc'}});const report=existing?await tx.report.update({where:{id:existing.id},data:{version,storageKey:stored.key,checksumSha256:stored.checksumSha256,sizeBytes:stored.sizeBytes,generatedById:user.userId,generatedAt:new Date()}}):await tx.report.create({data:{organizationId:inspection.organizationId,inspectionId,reportNumber,version,storageKey,checksumSha256:stored.checksumSha256,sizeBytes:stored.sizeBytes,generatedById:user.userId}});await tx.report.deleteMany({where:{organizationId:inspection.organizationId,inspectionId,reportNumber,NOT:{id:report.id}}});
-      // A manual regeneration must refresh the PDF without moving an already generated inspection backwards.
-      if(inspection.status!==InspectionStatus.REPORT_GENERATED)await tx.inspection.update({where:{id:inspectionId},data:{status:InspectionStatus.REPORT_GENERATED,version:{increment:1}}});
-      if(inspection.status!==InspectionStatus.REPORT_GENERATED)await tx.inspectionStatusEvent.create({data:{inspectionId,fromStatus:inspection.status,toStatus:InspectionStatus.REPORT_GENERATED,actorId:user.userId,comment:`Report ${reportNumber} generated.`}});
-      if(inspection.inspectorId)await this.notifications.create({userId:inspection.inspectorId,type:'REPORT_READY',title:'Report available',message:`The official report for ${inspection.inspectionNumber} is ready to download.`,entityType:'Report',entityId:report.id},tx);
-      await this.audit.record({organizationId:inspection.organizationId,userId:user.userId,action:'REPORT_GENERATED',entityType:'Report',entityId:report.id,metadata:{reportNumber,version,inspectionNumber:inspection.inspectionNumber,checksum:stored.checksumSha256,regenerated:Boolean(existing)},meta},tx);return report;});
+
+    return this.prisma.runInTransaction(async(tx)=>{
+      // The report's compound unique key is the concurrency guard. Using an
+      // upsert here makes regeneration safe even if two requests arrive at
+      // nearly the same time (for example from a double-click or retry).
+      const report=await tx.report.upsert({
+        where:{organizationId_reportNumber_version:{organizationId:inspection.organizationId,reportNumber,version}},
+        create:{organizationId:inspection.organizationId,inspectionId,reportNumber,version,storageKey:stored.key,checksumSha256:stored.checksumSha256,sizeBytes:stored.sizeBytes,generatedById:user.userId},
+        update:{inspectionId,storageKey:stored.key,checksumSha256:stored.checksumSha256,sizeBytes:stored.sizeBytes,generatedById:user.userId,generatedAt:new Date()},
+      });
+
+      // Remove historical versions/duplicates of this final report so the
+      // system continues to expose exactly one authoritative final report.
+      await tx.report.deleteMany({where:{organizationId:inspection.organizationId,inspectionId,reportNumber,NOT:{id:report.id}}});
+
+      // Only the first concurrent request should transition the inspection and
+      // create the status event/notification. Regeneration itself remains safe
+      // and does not create duplicate workflow events.
+      const statusUpdate=await tx.inspection.updateMany({
+        where:{id:inspectionId,status:{not:InspectionStatus.REPORT_GENERATED}},
+        data:{status:InspectionStatus.REPORT_GENERATED,version:{increment:1}},
+      });
+      if(statusUpdate.count>0){
+        await tx.inspectionStatusEvent.create({data:{inspectionId,fromStatus:inspection.status,toStatus:InspectionStatus.REPORT_GENERATED,actorId:user.userId,comment:`Report ${reportNumber} generated.`}});
+        if(inspection.inspectorId)await this.notifications.create({userId:inspection.inspectorId,type:'REPORT_READY',title:'Report available',message:`The official report for ${inspection.inspectionNumber} is ready to download.`,entityType:'Report',entityId:report.id},tx);
+      }
+
+      await this.audit.record({organizationId:inspection.organizationId,userId:user.userId,action:'REPORT_GENERATED',entityType:'Report',entityId:report.id,metadata:{reportNumber,version,inspectionNumber:inspection.inspectionNumber,checksum:stored.checksumSha256,regenerated:statusUpdate.count===0},meta},tx);
+      return report;
+    });
   }
 
   async list(user:TenantContext,query:{page:number;pageSize:number;search?:string}):Promise<PaginatedResult<unknown>>{const scope=buildTenantScope(user);const where={organizationId:scope.organizationId,...(scope.branchId?{inspection:{branchId:scope.branchId}}:{}),...(query.search?{OR:[{reportNumber:{contains:query.search,mode:'insensitive' as const}},{inspection:{inspectionNumber:{contains:query.search,mode:'insensitive' as const}}},{inspection:{loanReference:{contains:query.search,mode:'insensitive' as const}}}]}:{})};const[rows,total]=await Promise.all([this.prisma.report.findMany({where,orderBy:{generatedAt:'desc'},skip:(query.page-1)*query.pageSize,take:query.pageSize,include:{inspection:{select:{id:true,inspectionNumber:true,loanReference:true,submittedAt:true,property:{select:{reference:true,addressLine:true,titleNumber:true,ownerClientName:true,propertyType:true,province:true,district:true,sector:true,cell:true,villageStreet:true}},inspector:{select:{firstName:true,lastName:true}},reviewer:{select:{firstName:true,lastName:true}}}},generatedBy:{select:{firstName:true,lastName:true}}}}),this.prisma.report.count({where})]);return paginate(rows,total,query.page,query.pageSize);}
