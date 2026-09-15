@@ -21,7 +21,7 @@ export class ReportsController {
 
   @Post('inspections/:id/draft-report')
   @RequirePermissions('reports.generate')
-  @ApiOperation({ summary: 'Create the draft PDF for a submitted inspection if it does not already exist' })
+  @ApiOperation({ summary: 'Regenerate the draft PDF from the inspection’s current data' })
   draft(
     @CurrentUser() user: TenantContext,
     @Param('id', ParseUUIDPipe) id: string,
@@ -32,7 +32,7 @@ export class ReportsController {
 
   @Post('inspections/:id/report')
   @RequirePermissions('reports.generate')
-  @ApiOperation({ summary: 'Generate (or regenerate as a new version) the official PDF' })
+  @ApiOperation({ summary: 'Generate or regenerate the official PDF from the latest approved inspection data' })
   generate(
     @CurrentUser() user: TenantContext,
     @Param('id', ParseUUIDPipe) id: string,
