@@ -32,7 +32,38 @@ export class ReviewsController {
   @Get('inspections/:id/review')
   @RequirePermissions('reviews.read')
   @ApiOperation({ summary: 'Get professional review workspace data and adjustment history' })
-  reviewWorkspace(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) { return this.reviews.reviewWorkspace(user, id); }
+  async reviewWorkspace(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
+    const workspace = await this.reviews.reviewWorkspace(user, id);
+    const reviewerValuation = await this.prisma.$queryRaw<Array<{
+      id: string;
+      inspectionId: string;
+      reviewerId: string;
+      currency: string;
+      marketValue: unknown;
+      forcedSaleValue: unknown;
+      replacementCost: unknown;
+      rentalEstimate: unknown;
+      comments: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>>`
+      SELECT id,
+             inspection_id AS "inspectionId",
+             reviewer_id AS "reviewerId",
+             currency,
+             market_value AS "marketValue",
+             forced_sale_value AS "forcedSaleValue",
+             replacement_cost AS "replacementCost",
+             rental_estimate AS "rentalEstimate",
+             comments,
+             created_at AS "createdAt",
+             updated_at AS "updatedAt"
+      FROM reviewer_valuations
+      WHERE inspection_id = ${id}
+      LIMIT 1
+    `;
+    return { ...workspace, reviewerValuation: reviewerValuation[0] ?? null };
+  }
 
   @Post('inspections/:id/begin-review')
   @RequirePermissions('reviews.decide')
@@ -84,29 +115,61 @@ export class ReviewsController {
     }
 
     const valuation = await this.prisma.runInTransaction(async (tx) => {
-      const result = await tx.inspectionValuation.upsert({
-        where: { inspectionId: id },
-        update: {
-          currency: dto.currency?.trim().toUpperCase() || 'RWF',
-          marketValue: dto.marketValue ?? null,
-          forcedSaleValue: dto.forcedSaleValue ?? null,
-          replacementCost: dto.replacementCost ?? null,
-          rentalEstimate: dto.rentalEstimate ?? null,
-          comments: dto.comments?.trim() || null,
-        },
-        create: {
-          inspectionId: id,
-          currency: dto.currency?.trim().toUpperCase() || 'RWF',
-          marketValue: dto.marketValue ?? null,
-          forcedSaleValue: dto.forcedSaleValue ?? null,
-          replacementCost: dto.replacementCost ?? null,
-          rentalEstimate: dto.rentalEstimate ?? null,
-          comments: dto.comments?.trim() || null,
-        },
-      });
+      const now = new Date();
+      const existing = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM reviewer_valuations WHERE inspection_id = ${id} LIMIT 1
+      `;
 
-      // Keep the existing reviewer metadata column in sync without relying on
-      // Prisma Client to know about this legacy/raw-SQL field.
+      let result: Record<string, unknown>[];
+      if (existing[0]) {
+        result = await tx.$queryRaw<Array<Record<string, unknown>>>`
+          UPDATE reviewer_valuations
+          SET reviewer_id = ${user.userId},
+              currency = ${dto.currency?.trim().toUpperCase() || 'RWF'},
+              market_value = ${dto.marketValue ?? null},
+              forced_sale_value = ${dto.forcedSaleValue ?? null},
+              replacement_cost = ${dto.replacementCost ?? null},
+              rental_estimate = ${dto.rentalEstimate ?? null},
+              comments = ${dto.comments?.trim() || null},
+              updated_at = ${now}
+          WHERE inspection_id = ${id}
+          RETURNING id,
+                    inspection_id AS "inspectionId",
+                    reviewer_id AS "reviewerId",
+                    currency,
+                    market_value AS "marketValue",
+                    forced_sale_value AS "forcedSaleValue",
+                    replacement_cost AS "replacementCost",
+                    rental_estimate AS "rentalEstimate",
+                    comments,
+                    created_at AS "createdAt",
+                    updated_at AS "updatedAt"
+        `;
+      } else {
+        result = await tx.$queryRaw<Array<Record<string, unknown>>>`
+          INSERT INTO reviewer_valuations (
+            inspection_id, reviewer_id, currency, market_value, forced_sale_value,
+            replacement_cost, rental_estimate, comments, created_at, updated_at
+          ) VALUES (
+            ${id}, ${user.userId}, ${dto.currency?.trim().toUpperCase() || 'RWF'},
+            ${dto.marketValue ?? null}, ${dto.forcedSaleValue ?? null},
+            ${dto.replacementCost ?? null}, ${dto.rentalEstimate ?? null},
+            ${dto.comments?.trim() || null}, ${now}, ${now}
+          )
+          RETURNING id,
+                    inspection_id AS "inspectionId",
+                    reviewer_id AS "reviewerId",
+                    currency,
+                    market_value AS "marketValue",
+                    forced_sale_value AS "forcedSaleValue",
+                    replacement_cost AS "replacementCost",
+                    rental_estimate AS "rentalEstimate",
+                    comments,
+                    created_at AS "createdAt",
+                    updated_at AS "updatedAt"
+        `;
+      }
+
       await tx.$executeRaw`
         UPDATE inspections
         SET "reviewerAdjustedAt" = CURRENT_TIMESTAMP,
@@ -132,7 +195,7 @@ export class ReviewsController {
         meta,
       }, tx);
 
-      return result;
+      return result[0];
     });
 
     return valuation;
