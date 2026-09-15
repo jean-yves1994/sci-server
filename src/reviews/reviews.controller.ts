@@ -62,7 +62,28 @@ export class ReviewsController {
       WHERE inspection_id = ${id}
       LIMIT 1
     `;
-    return { ...workspace, reviewerValuation: reviewerValuation[0] ?? null };
+
+    // The professional review workspace must expose the same status history
+    // expected by the web review panel. getReviewable() intentionally keeps
+    // its query focused, so load the audit/status timeline explicitly here.
+    const statusEvents = await this.prisma.inspectionStatusEvent.findMany({
+      where: { inspectionId: id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        actor: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+      },
+    });
+
+    return {
+      ...workspace,
+      inspection: {
+        ...workspace.inspection,
+        statusEvents,
+      },
+      reviewerValuation: reviewerValuation[0] ?? null,
+    };
   }
 
   @Post('inspections/:id/begin-review')
@@ -152,8 +173,7 @@ export class ReviewsController {
             replacement_cost, rental_estimate, comments, created_at, updated_at
           ) VALUES (
             ${id}, ${user.userId}, ${dto.currency?.trim().toUpperCase() || 'RWF'},
-            ${dto.marketValue ?? null}, ${dto.forcedSaleValue ?? null},
-            ${dto.replacementCost ?? null}, ${dto.rentalEstimate ?? null},
+            ${dto.marketValue ?? null}, ${dto.forcedSaleValue ?? null}, ${dto.replacementCost ?? null}, ${dto.rentalEstimate ?? null},
             ${dto.comments?.trim() || null}, ${now}, ${now}
           )
           RETURNING id,
