@@ -3,12 +3,11 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ClientMeta, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { RequestMetadata, TenantContext, canAccessBranch } from '../common/tenant-context';
-import { InspectionQueryDto } from '../inspections/dto/inspection.dto';
+import { InspectionQueryDto, SaveValuationDto } from '../inspections/dto/inspection.dto';
 import { InspectionsService } from '../inspections/inspections.service';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ApproveDto, CommentDto, DecisionDto, ReviewerAdjustmentDto, ReviewerConclusionDto, ReviewerRiskDto } from './dto/review.dto';
-import { SaveValuationDto } from '../inspections/dto/inspection.dto';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../common/errors/domain.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { InspectionStatus } from '@prisma/client';
@@ -108,7 +107,7 @@ export class ReviewsController {
 
       await tx.inspection.update({
         where: { id },
-        data: { reviewerAdjustedAt: new Date(), version: { increment: 1 } },
+        data: { version: { increment: 1 } },
       });
 
       await this.audit.record({
