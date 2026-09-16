@@ -54,14 +54,12 @@ export class ReportsService {
     const pdf = await this.renderer.render(this.toReportData(inspection, reportNumber, version, generatedByName));
     const storageKey = `reports/${inspection.organizationId}/${reportNumber}-v${version}.pdf`;
     const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
-
     const draftReportNumber = this.buildDraftReportNumber(inspection.inspectionNumber, Math.max(inspection.submissionCount, 1));
     const existingDraft = await this.prisma.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber: draftReportNumber }, orderBy: { version: 'desc' } });
     const draftVersion = (existingDraft?.version ?? 0) + 1;
     const draftPdf = await this.renderer.render(this.toReportData(inspection, draftReportNumber, draftVersion, generatedByName));
     const draftStorageKey = `reports/${inspection.organizationId}/drafts/${draftReportNumber}-v${draftVersion}.pdf`;
     const draftStored = await this.storage.put(draftStorageKey, draftPdf, 'application/pdf');
-
     return this.prisma.runInTransaction(async (tx) => {
       const current = await tx.report.findFirst({ where: { organizationId: inspection.organizationId, inspectionId, reportNumber }, orderBy: { version: 'desc' } });
       const report = current ? await tx.report.update({ where: { id: current.id }, data: { version, inspectionId, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId, generatedAt: new Date() } }) : await tx.report.create({ data: { organizationId: inspection.organizationId, inspectionId, reportNumber, version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedById: user.userId } });
@@ -94,17 +92,14 @@ export class ReportsService {
       const live = await this.loadForReport(user.organizationId, report.inspectionId);
       if (!live) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
       const finalStatuses: InspectionStatus[] = [InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED];
-      if (!finalStatuses.includes(live.status)) {
-        throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'The final report can only be downloaded for an approved inspection.');
-      }
+      if (!finalStatuses.includes(live.status)) throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'The final report can only be downloaded for an approved inspection.');
       const generatedByName = await this.generatedByName(report.generatedById);
       const version = report.version + 1;
       const pdf = await this.renderer.render(this.toReportData(live, report.reportNumber, version, generatedByName));
       const storageKey = `reports/${live.organizationId}/${report.reportNumber}-v${version}.pdf`;
       const stored = await this.storage.put(storageKey, pdf, 'application/pdf');
-      await this.prisma.report.update({ where: { id: report.id }, data: { version, storageKey: stored.key, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedAt: new Date() } });
-      report.version = version;
-      report.storageKey = stored.key;
+      await this.prisma.report.update({ where: { id: report.id }, data: { version, storageKey, checksumSha256: stored.checksumSha256, sizeBytes: stored.sizeBytes, generatedAt: new Date() } });
+      report.version = version; report.storageKey = storageKey;
     }
     const url = await this.storage.getSignedUrl(report.storageKey, DOWNLOAD_TTL_SECONDS, disposition);
     await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REPORT_DOWNLOADED', entityType: 'Report', entityId: report.id, metadata: { reportNumber: report.reportNumber, disposition, version: report.version }, meta });
@@ -122,7 +117,8 @@ export class ReportsService {
     const inspection = await this.prisma.inspection.findFirst({ where: { id, organizationId, deletedAt: null }, include: { organization: true, branch: true, property: { include: { division: true } }, owner: true, valuation: true, inspector: { select: { firstName: true, lastName: true } }, reviewer: { select: { firstName: true, lastName: true } }, assessments: { orderBy: { sortOrder: 'asc' } }, locations: { orderBy: { capturedAt: 'desc' }, take: 1 }, photos: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } }, values: { include: { field: { include: { section: true } } } }, comments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { firstName: true, lastName: true } } } }, statusEvents: { orderBy: { createdAt: 'asc' }, include: { actor: { select: { firstName: true, lastName: true } } } } } });
     if (!inspection) return null;
     const rv = await this.prisma.$queryRaw<Array<{ currency: string; landValue: any; mainBuildingValue: any; totalEstimatedValue: any; comments: string | null }>>`SELECT currency, land_value AS "landValue", main_building_value AS "mainBuildingValue", total_estimated_value AS "totalEstimatedValue", comments FROM reviewer_valuations WHERE inspection_id=${id} LIMIT 1`;
-    return { ...inspection, reviewerValuation: rv[0] ?? null };
+    const map = await this.prisma.$queryRaw<Array<{ storageKey: string; mimeType: string }>>`SELECT storage_key AS "storageKey", mime_type AS "mimeType" FROM reviewer_map_images WHERE inspection_id=${id} LIMIT 1`;
+    return { ...inspection, reviewerValuation: rv[0] ?? null, reviewerMap: map[0] ?? null };
   }
 
   private toReportData(inspection: NonNullable<Awaited<ReturnType<ReportsService['loadForReport']>>>, reportNumber: string, version: number, generatedByName: string): ReportData {
@@ -139,10 +135,7 @@ export class ReportsService {
     const valuation = { currency, landValue, mainBuildingValue, totalEstimatedValue, comments: rv?.comments ?? null };
     return {
       organization: { name: inspection.organization.name, legalName: inspection.organization.legalName, addressLine: inspection.organization.addressLine, phone: inspection.organization.phone, email: inspection.organization.email },
-      reportNumber,
-      version,
-      generatedAt: new Date(),
-      generatedBy: generatedByName,
+      reportNumber, version, generatedAt: new Date(), generatedBy: generatedByName,
       inspection: { inspectionNumber: inspection.inspectionNumber, loanReference: inspection.loanReference, clientName: inspection.clientName, status: inspection.status, submittedAt: inspection.submittedAt, approvedAt: inspection.approvedAt, branch: `${inspection.branch.code} — ${inspection.branch.name}` },
       property: { reference: inspection.property.reference, propertyType: inspection.property.propertyType, addressLine: address || inspection.property.addressLine || '—', titleNumber: inspection.property.titleNumber, division: inspection.property.division?.name ?? null },
       owner: inspection.owner ? { fullName: inspection.owner.fullName, phone: inspection.owner.phone, email: inspection.owner.email, occupancyStatus: inspection.owner.occupancyStatus, ownershipType: inspection.owner.ownershipType } : null,
@@ -152,6 +145,7 @@ export class ReportsService {
       valuation,
       fieldValues: fieldValues.map(({ section, label, value }) => ({ section, label, value })),
       photos: inspection.photos.map(p => ({ category: p.category, storageKey: p.storageKey, caption: p.caption, capturedAt: p.capturedAt })),
+      reviewerMap: inspection.reviewerMap,
     };
   }
 
