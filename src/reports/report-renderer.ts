@@ -29,9 +29,6 @@ export class ReportRenderer {
   constructor(private readonly storage: StorageProvider) {}
 
   async render(data: ReportData): Promise<Buffer> {
-    // Do not let PDFKit create its implicit first page. Every page is created
-    // explicitly, so no footer/text operation can accidentally create a new
-    // blank page.
     const doc = new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true, autoFirstPage: false });
     const chunks: Buffer[] = [];
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -162,10 +159,8 @@ export class ReportRenderer {
     if (!data.reviewerMap) return;
     try {
       const image = await this.storage.get(data.reviewerMap.storageKey);
-      // A map is content, so only create a page when the map cannot fit on
-      // the current page. The image itself is never preceded by an empty page.
-      const required = 220;
-      this.ensure(doc, required);
+      this.section(doc, 'Map');
+      this.ensure(doc, 220);
       const availableH = Math.min(450, Math.max(120, doc.page.height - MARGIN - doc.y - 35));
       doc.image(image, MARGIN, doc.y, { fit: [CONTENT_WIDTH, availableH], align: 'center', valign: 'center' });
       doc.y += availableH + 10;
@@ -179,6 +174,7 @@ export class ReportRenderer {
 
   private async photos(doc: PDFKit.PDFDocument, data: ReportData) {
     if (!data.photos.length) return;
+    this.section(doc, 'Photographic evidence');
     const gap = 14, cell = (CONTENT_WIDTH - gap) / 2, imageH = 138, rowH = imageH + 40, bottom = doc.page.height - MARGIN;
     let col = 0, rowTop = doc.y;
     for (const p of data.photos) {
@@ -211,8 +207,6 @@ export class ReportRenderer {
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
       const footerY = doc.page.height - MARGIN - 10;
-      // lineBreak:false is critical: the footer must never cause PDFKit to
-      // advance to another page while it is being written.
       doc.font('Helvetica').fontSize(7).fillColor(C.muted).text(`Page ${i + 1} of ${range.count}`, MARGIN, footerY, {
         width: CONTENT_WIDTH,
         align: 'center',
