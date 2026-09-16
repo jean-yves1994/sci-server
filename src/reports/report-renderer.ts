@@ -22,6 +22,8 @@ const C = { ink: '#0f172a', muted: '#64748b', rule: '#cbd5e1', brand: '#1d4ed8',
 const MARGIN = 50;
 const PAGE_WIDTH = 595.28;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+const MAP_WIDTH = 420;
+const MAP_HEIGHT = 250;
 
 @Injectable()
 export class ReportRenderer {
@@ -159,12 +161,16 @@ export class ReportRenderer {
     if (!data.reviewerMap) return;
     try {
       const image = await this.storage.get(data.reviewerMap.storageKey);
+      // Give the map a deliberate visual separation from the condition
+      // assessment, while keeping it on the current page when possible.
+      this.ensure(doc, MAP_HEIGHT + 90);
+      doc.moveDown(1.35);
       this.section(doc, 'Map');
-      this.ensure(doc, 220);
-      const availableH = Math.min(450, Math.max(120, doc.page.height - MARGIN - doc.y - 35));
-      doc.image(image, MARGIN, doc.y, { fit: [CONTENT_WIDTH, availableH], align: 'center', valign: 'center' });
-      doc.y += availableH + 10;
-      doc.font('Helvetica').fontSize(7.5).fillColor(C.muted).text('Map supplied during professional review.', MARGIN, doc.y, { width: CONTENT_WIDTH, align: 'center' });
+      this.ensure(doc, MAP_HEIGHT + 35);
+      const y = doc.y;
+      doc.image(image, MARGIN, y, { fit: [MAP_WIDTH, MAP_HEIGHT], align: 'left', valign: 'top' });
+      doc.y = y + MAP_HEIGHT + 10;
+      doc.font('Helvetica').fontSize(7.5).fillColor(C.muted).text('Map supplied during professional review.', MARGIN, doc.y, { width: CONTENT_WIDTH, align: 'left', lineBreak: false });
       doc.moveDown(0.5);
     } catch (e) {
       this.logger.warn(`Reviewer map unavailable: ${String(e)}`);
@@ -182,14 +188,14 @@ export class ReportRenderer {
       const x = MARGIN + col * (cell + gap);
       try {
         const b = await this.storage.get(p.storageKey);
-        doc.image(b, x, rowTop, { fit: [cell, imageH], align: 'center', valign: 'center' });
+        doc.image(b, x, rowTop, { fit: [cell, imageH], align: 'left', valign: 'top' });
       } catch (e) {
         this.logger.warn(`Photo unavailable: ${String(e)}`);
         doc.rect(x, rowTop, cell, imageH).fill(C.panel);
-        doc.fillColor(C.muted).fontSize(8).text('Image unavailable', x, rowTop + imageH / 2 - 4, { width: cell, align: 'center' });
+        doc.fillColor(C.muted).fontSize(8).text('Image unavailable', x, rowTop + imageH / 2 - 4, { width: cell, align: 'left' });
       }
-      doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(8).text(describePhotoCategory(p.category), x, rowTop + imageH + 5, { width: cell, ellipsis: true });
-      if (p.caption) doc.font('Helvetica').fontSize(7.5).fillColor(C.muted).text(p.caption, x, rowTop + imageH + 16, { width: cell, ellipsis: true });
+      doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(8).text(describePhotoCategory(p.category), x, rowTop + imageH + 5, { width: cell, ellipsis: true, lineBreak: false });
+      if (p.caption) doc.font('Helvetica').fontSize(7.5).fillColor(C.muted).text(p.caption, x, rowTop + imageH + 16, { width: cell, ellipsis: true, lineBreak: false });
       col++;
       if (col >= 2) { col = 0; rowTop += rowH; doc.y = rowTop; }
     }
@@ -218,7 +224,9 @@ export class ReportRenderer {
   private section(doc: PDFKit.PDFDocument, title: string) {
     this.ensure(doc, 42);
     doc.moveDown(0.6);
-    doc.font('Helvetica-Bold').fontSize(12).fillColor(C.ink).text(title, MARGIN, doc.y);
+    // All report section headings use the same brand color as the
+    // Property Classification heading.
+    doc.font('Helvetica-Bold').fontSize(12).fillColor(C.brand).text(title, MARGIN, doc.y);
     doc.moveTo(MARGIN, doc.y + 4).lineTo(MARGIN + CONTENT_WIDTH, doc.y + 4).strokeColor(C.rule).lineWidth(0.6).stroke();
     doc.moveDown(0.45);
   }
