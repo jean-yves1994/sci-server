@@ -161,14 +161,16 @@ export class ReportRenderer {
     if (!data.reviewerMap) return;
     try {
       const image = await this.storage.get(data.reviewerMap.storageKey);
-      // Give the map a deliberate visual separation from the condition
-      // assessment, while keeping it on the current page when possible.
-      this.ensure(doc, MAP_HEIGHT + 90);
+      // Keep clear separation from the preceding condition assessment and use
+      // a consistent medium-size map aligned to the report's left margin.
+      this.ensure(doc, MAP_HEIGHT + 100);
       doc.moveDown(1.35);
       this.section(doc, 'Map');
       this.ensure(doc, MAP_HEIGHT + 35);
       const y = doc.y;
-      doc.image(image, MARGIN, y, { fit: [MAP_WIDTH, MAP_HEIGHT], align: 'left', valign: 'top' });
+      // x/y establish the image's left/top position. PDFKit's align/valign
+      // options do not accept 'left'/'top' in the current TypeScript types.
+      doc.image(image, MARGIN, y, { fit: [MAP_WIDTH, MAP_HEIGHT] });
       doc.y = y + MAP_HEIGHT + 10;
       doc.font('Helvetica').fontSize(7.5).fillColor(C.muted).text('Map supplied during professional review.', MARGIN, doc.y, { width: CONTENT_WIDTH, align: 'left', lineBreak: false });
       doc.moveDown(0.5);
@@ -188,7 +190,7 @@ export class ReportRenderer {
       const x = MARGIN + col * (cell + gap);
       try {
         const b = await this.storage.get(p.storageKey);
-        doc.image(b, x, rowTop, { fit: [cell, imageH], align: 'left', valign: 'top' });
+        doc.image(b, x, rowTop, { fit: [cell, imageH] });
       } catch (e) {
         this.logger.warn(`Photo unavailable: ${String(e)}`);
         doc.rect(x, rowTop, cell, imageH).fill(C.panel);
@@ -224,8 +226,6 @@ export class ReportRenderer {
   private section(doc: PDFKit.PDFDocument, title: string) {
     this.ensure(doc, 42);
     doc.moveDown(0.6);
-    // All report section headings use the same brand color as the
-    // Property Classification heading.
     doc.font('Helvetica-Bold').fontSize(12).fillColor(C.brand).text(title, MARGIN, doc.y);
     doc.moveTo(MARGIN, doc.y + 4).lineTo(MARGIN + CONTENT_WIDTH, doc.y + 4).strokeColor(C.rule).lineWidth(0.6).stroke();
     doc.moveDown(0.45);
