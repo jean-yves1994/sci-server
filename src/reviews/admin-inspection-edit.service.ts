@@ -9,7 +9,7 @@ import { PrismaService } from '../database/prisma.service';
 import { SaveOwnerDto, SaveValuesDto } from '../inspections/dto/inspection.dto';
 import { RequestMetadata } from '../common/tenant-context';
 
-const FINAL_STATUSES = [InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED, InspectionStatus.ARCHIVED];
+const FINAL_STATUSES: InspectionStatus[] = [InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED, InspectionStatus.ARCHIVED];
 
 @Injectable()
 export class AdminInspectionEditService {
@@ -21,14 +21,26 @@ export class AdminInspectionEditService {
       for (const entry of dto.values) {
         const field = await tx.templateField.findFirst({ where: { id: entry.fieldId, section: { templateId: inspection.templateId } }, select: { id: true, code: true } });
         if (!field) continue;
-        const data: Prisma.InspectionValueUncheckedUpdateInput = {
+        const data: Prisma.InspectionValueUncheckedCreateInput = {
+          inspectionId: id,
+          fieldId: entry.fieldId,
           valueText: entry.valueText ?? null,
           valueNumber: entry.valueNumber ?? null,
           valueDate: entry.valueDate ? new Date(entry.valueDate) : null,
           valueBool: entry.valueBool ?? null,
           valueJson: (entry.valueJson ?? null) as Prisma.InputJsonValue,
         };
-        await tx.inspectionValue.upsert({ where: { inspectionId_fieldId: { inspectionId: id, fieldId: entry.fieldId } }, update: data, create: { inspectionId: id, fieldId: entry.fieldId, ...data } });
+        await tx.inspectionValue.upsert({
+          where: { inspectionId_fieldId: { inspectionId: id, fieldId: entry.fieldId } },
+          update: {
+            valueText: entry.valueText ?? null,
+            valueNumber: entry.valueNumber ?? null,
+            valueDate: entry.valueDate ? new Date(entry.valueDate) : null,
+            valueBool: entry.valueBool ?? null,
+            valueJson: (entry.valueJson ?? null) as Prisma.InputJsonValue,
+          },
+          create: data,
+        });
       }
       await tx.inspection.update({ where: { id }, data: { version: { increment: 1 } } });
       await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'ADMIN_INSPECTION_FIELDS_UPDATED', entityType: 'Inspection', entityId: id, metadata: { fieldCount: dto.values.length, baseVersion: dto.baseVersion ?? null }, meta }, tx);
