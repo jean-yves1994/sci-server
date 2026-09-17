@@ -42,7 +42,7 @@ BEGIN
     validation = EXCLUDED.validation;
 END $$;
 
--- Keep valuation totals authoritative and server-calculated.
+-- Keep improved-property valuation totals authoritative and server-calculated.
 -- annex total = Annex 1 + Annex 2 + Annex 3 + Annex 4
 -- total estimated value = land value + main building value + annex total
 CREATE OR REPLACE FUNCTION calculate_inspection_valuation_totals()
@@ -73,6 +73,8 @@ BEGIN
   FROM template_fields
   WHERE id = NEW."fieldId";
 
+  -- Generated totals are written by this function itself. Do not recurse into
+  -- the same calculation when those rows are inserted/updated.
   IF changed_field_code IN ('ANNEX_TOTAL_VALUE', 'IMPROVED_TOTAL_VALUE') THEN
     RETURN NEW;
   END IF;
@@ -152,7 +154,12 @@ BEGIN
 
   IF total_field_id IS NOT NULL THEN
     INSERT INTO inspection_values (id, "inspectionId", "fieldId", "valueNumber")
-    VALUES (gen_random_uuid()::text, NEW."inspectionId", total_field_id, land_value + main_value + annex_sum)
+    VALUES (
+      gen_random_uuid()::text,
+      NEW."inspectionId",
+      total_field_id,
+      land_value + main_value + annex_sum
+    )
     ON CONFLICT ("inspectionId", "fieldId") DO UPDATE
       SET "valueNumber" = EXCLUDED."valueNumber",
           "valueText" = NULL,
@@ -165,9 +172,13 @@ BEGIN
 END;
 $$;
 
+-- Do not use PostgreSQL's UPDATE OF column-list here. The production database
+-- uses Prisma's camelCase column names and an earlier deployment reported the
+-- unquoted snake_case value_number while parsing the trigger. Firing on every
+-- INSERT/UPDATE is safe because the function exits for generated total rows.
 DROP TRIGGER IF EXISTS trg_calculate_inspection_valuation_totals ON inspection_values;
 CREATE TRIGGER trg_calculate_inspection_valuation_totals
-AFTER INSERT OR UPDATE OF "valueNumber", "valueText", "valueJson" ON inspection_values
+AFTER INSERT OR UPDATE ON inspection_values
 FOR EACH ROW
 WHEN (NEW."fieldId" IS NOT NULL)
 EXECUTE FUNCTION calculate_inspection_valuation_totals();
