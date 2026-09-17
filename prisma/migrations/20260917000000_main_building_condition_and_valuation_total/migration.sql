@@ -42,10 +42,9 @@ BEGIN
     validation = EXCLUDED.validation;
 END $$;
 
--- Keep the inspector's total valuation authoritative and server-calculated.
--- For improved properties:
---   annex total = Annex 1 + Annex 2 + Annex 3 + Annex 4 values
---   total = land value + main building value + annex total
+-- Keep valuation totals authoritative and server-calculated.
+-- annex total = Annex 1 + Annex 2 + Annex 3 + Annex 4
+-- total estimated value = land value + main building value + annex total
 CREATE OR REPLACE FUNCTION calculate_inspection_valuation_totals()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -74,12 +73,10 @@ BEGIN
   FROM template_fields
   WHERE id = NEW."fieldId";
 
-  -- Do not recurse when the trigger updates its own calculated fields.
   IF changed_field_code IN ('ANNEX_TOTAL_VALUE', 'IMPROVED_TOTAL_VALUE') THEN
     RETURN NEW;
   END IF;
 
-  -- Only calculate improved-property valuation totals.
   IF NOT EXISTS (
     SELECT 1
     FROM inspection_values iv
@@ -116,13 +113,13 @@ BEGIN
   LIMIT 1;
 
   IF land_field_id IS NOT NULL THEN
-    SELECT COALESCE(value_number, 0) INTO land_value
+    SELECT COALESCE("valueNumber", 0) INTO land_value
     FROM inspection_values
     WHERE "inspectionId" = NEW."inspectionId" AND "fieldId" = land_field_id;
   END IF;
 
   IF main_field_id IS NOT NULL THEN
-    SELECT COALESCE(value_number, 0) INTO main_value
+    SELECT COALESCE("valueNumber", 0) INTO main_value
     FROM inspection_values
     WHERE "inspectionId" = NEW."inspectionId" AND "fieldId" = main_field_id;
   END IF;
@@ -135,7 +132,7 @@ BEGIN
     LIMIT 1;
 
     IF annex_field_id IS NOT NULL THEN
-      SELECT COALESCE(value_number, 0) INTO current_value
+      SELECT COALESCE("valueNumber", 0) INTO current_value
       FROM inspection_values
       WHERE "inspectionId" = NEW."inspectionId" AND "fieldId" = annex_field_id;
       annex_sum := annex_sum + COALESCE(current_value, 0);
@@ -143,25 +140,25 @@ BEGIN
   END LOOP;
 
   IF annex_total_field_id IS NOT NULL THEN
-    INSERT INTO inspection_values (id, "inspectionId", "fieldId", value_number)
+    INSERT INTO inspection_values (id, "inspectionId", "fieldId", "valueNumber")
     VALUES (gen_random_uuid()::text, NEW."inspectionId", annex_total_field_id, annex_sum)
     ON CONFLICT ("inspectionId", "fieldId") DO UPDATE
-      SET value_number = EXCLUDED.value_number,
-          value_text = NULL,
-          value_date = NULL,
-          value_bool = NULL,
-          value_json = NULL;
+      SET "valueNumber" = EXCLUDED."valueNumber",
+          "valueText" = NULL,
+          "valueDate" = NULL,
+          "valueBool" = NULL,
+          "valueJson" = NULL;
   END IF;
 
   IF total_field_id IS NOT NULL THEN
-    INSERT INTO inspection_values (id, "inspectionId", "fieldId", value_number)
+    INSERT INTO inspection_values (id, "inspectionId", "fieldId", "valueNumber")
     VALUES (gen_random_uuid()::text, NEW."inspectionId", total_field_id, land_value + main_value + annex_sum)
     ON CONFLICT ("inspectionId", "fieldId") DO UPDATE
-      SET value_number = EXCLUDED.value_number,
-          value_text = NULL,
-          value_date = NULL,
-          value_bool = NULL,
-          value_json = NULL;
+      SET "valueNumber" = EXCLUDED."valueNumber",
+          "valueText" = NULL,
+          "valueDate" = NULL,
+          "valueBool" = NULL,
+          "valueJson" = NULL;
   END IF;
 
   RETURN NEW;
@@ -170,7 +167,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_calculate_inspection_valuation_totals ON inspection_values;
 CREATE TRIGGER trg_calculate_inspection_valuation_totals
-AFTER INSERT OR UPDATE OF value_number, value_text, value_json ON inspection_values
+AFTER INSERT OR UPDATE OF "valueNumber", "valueText", "valueJson" ON inspection_values
 FOR EACH ROW
 WHEN (NEW."fieldId" IS NOT NULL)
 EXECUTE FUNCTION calculate_inspection_valuation_totals();
