@@ -46,15 +46,13 @@ END $$;
 -- For improved properties:
 --   annex total = Annex 1 + Annex 2 + Annex 3 + Annex 4 values
 --   total = land value + main building value + annex total
--- The trigger treats missing optional annex values as zero and never lets the
--- client manually override the calculated total.
 CREATE OR REPLACE FUNCTION calculate_inspection_valuation_totals()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  inspection_status text;
   template_id text;
+  changed_field_code text;
   land_field_id text;
   main_field_id text;
   annex_total_field_id text;
@@ -66,12 +64,20 @@ DECLARE
   i integer;
   annex_field_id text;
 BEGIN
-  SELECT status::text, "templateId"
-    INTO inspection_status, template_id
+  SELECT "templateId" INTO template_id
   FROM inspections
   WHERE id = NEW."inspectionId";
 
-  IF inspection_status IS NULL THEN RETURN NEW; END IF;
+  IF template_id IS NULL THEN RETURN NEW; END IF;
+
+  SELECT code INTO changed_field_code
+  FROM template_fields
+  WHERE id = NEW."fieldId";
+
+  -- Do not recurse when the trigger updates its own calculated fields.
+  IF changed_field_code IN ('ANNEX_TOTAL_VALUE', 'IMPROVED_TOTAL_VALUE') THEN
+    RETURN NEW;
+  END IF;
 
   -- Only calculate improved-property valuation totals.
   IF NOT EXISTS (
