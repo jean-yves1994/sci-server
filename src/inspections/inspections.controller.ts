@@ -3,6 +3,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ClientMeta, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
+import { ForbiddenError } from '../common/errors/domain.exception';
+import { ErrorCode } from '../common/errors/error-codes';
 import { RequestMetadata, TenantContext } from '../common/tenant-context';
 import { ReportsService } from '../reports/reports.service';
 import {
@@ -24,20 +26,34 @@ export class InspectionsController {
   @RequirePermissions('inspections.read')
   @ApiOperation({ summary: 'List inspections with search, filtering, sorting and pagination' })
   list(@CurrentUser() user: TenantContext, @Query() query: InspectionQueryDto) {
+    // Inspectors must never be able to widen their visibility by omitting or
+    // overriding assignedToMe. The backend is the authority; the web/app
+    // clients only provide the preferred UI filter.
+    if (this.isInspector(user)) query.assignedToMe = true;
     return this.inspections.list(user, query);
   }
 
   @Get(':id')
   @RequirePermissions('inspections.read')
   @ApiOperation({ summary: 'Full inspection detail including completeness and GPS assessment' })
-  findOne(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
-    return this.inspections.findOne(user, id);
+  async findOne(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
+    const inspection = await this.inspections.findOne(user, id) as {
+      inspector?: { id?: string } | null;
+    };
+
+    this.assertInspectorAccess(user, inspection.inspector?.id ?? null);
+    return inspection;
   }
 
   @Get(':id/completeness')
   @RequirePermissions('inspections.read')
   @ApiOperation({ summary: 'Review summary: progress, missing fields, missing photographs' })
-  completeness(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
+  async completeness(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
+    // Authorise the resource itself before returning its completeness details.
+    const inspection = await this.inspections.findOne(user, id) as {
+      inspector?: { id?: string } | null;
+    };
+    this.assertInspectorAccess(user, inspection.inspector?.id ?? null);
     return this.inspections.completeness(user, id);
   }
 
@@ -157,5 +173,18 @@ export class InspectionsController {
     await this.reports.generateDraft(user, id, meta);
     // Preserve the original submit response shape for the inspector app/web clients.
     return inspection;
+  }
+
+  private isInspector(user: TenantContext): boolean {
+    return user.roles.some((role) => role.trim().toLowerCase() === 'inspector');
+  }
+
+  private assertInspectorAccess(user: TenantContext, inspectorId: string | null): void {
+    if (this.isInspector(user) && inspectorId !== user.userId) {
+      throw new ForbiddenError(
+        'Inspectors can only access inspections assigned to themselves.',
+        ErrorCode.AUTH_FORBIDDEN,
+      );
+    }
   }
 }
