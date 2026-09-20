@@ -50,6 +50,7 @@ export class ReportRenderer {
     if (data.reportNumber.startsWith('DRF-')) this.estimation(doc, data);
     await this.reviewerMap(doc, data);
     await this.photos(doc, data);
+    this.reviewerConfirmation(doc);
     this.approval(doc, data);
 
     this.pageNumbers(doc);
@@ -202,6 +203,17 @@ export class ReportRenderer {
       if (col >= 2) { col = 0; rowTop += rowH; doc.y = rowTop; }
     }
     doc.y = col > 0 ? rowTop + rowH : rowTop;
+  }
+
+  private reviewerConfirmation(doc: PDFKit.PDFDocument) {
+    this.section(doc, 'Reviewer Confirmation');
+    doc.font('Helvetica').fontSize(9).fillColor(C.ink).text(
+      'Real Covenants Ltd confirms that the inspection information submitted has been checked against the available inspection evidence and is considered sufficiently reliable for use within the applicable credit process, subject to the limitations and comments stated in this report. This confirmation relates to the reliability and consistency of the inspected information and does not, by itself, constitute a valuation opinion unless expressly stated as such.',
+      MARGIN,
+      doc.y,
+      { width: CONTENT_WIDTH, align: 'left' },
+    );
+    doc.moveDown(0.5);
   }
 
   private approval(doc: PDFKit.PDFDocument, data: ReportData) {
