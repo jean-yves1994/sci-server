@@ -93,7 +93,7 @@ export class ReportRenderer {
   private owner(doc: PDFKit.PDFDocument, data: ReportData) {
     this.section(doc, 'Owner');
     if (!data.owner) { this.note(doc, 'No owner information was recorded.'); return; }
-    this.kv(doc, [['Name', data.owner.fullName], ['Phone', data.owner.phone ?? '—'], ['Email', data.owner.email ?? '—'], ['Occupancy', this.human(data.owner.occupancyStatus)], ['Ownership', this.human(data.owner.ownershipType)]]);
+    this.kv(doc, [['Name', data.owner.fullName]]);
   }
 
   private location(doc: PDFKit.PDFDocument, data: ReportData) {
@@ -155,6 +155,8 @@ export class ReportRenderer {
     if (v.landValue !== null) rows.push(['Land value', this.money(v.landValue, v.currency)]);
     if (v.mainBuildingValue !== null) rows.push(['Main building value', this.money(v.mainBuildingValue, v.currency)]);
     rows.push(['Total estimated value', this.money(v.totalEstimatedValue, v.currency)]);
+    const forcedSaleValue = v.totalEstimatedValue !== null ? v.totalEstimatedValue * 0.70 : null;
+    rows.push(['Forces sale value', this.money(forcedSaleValue, v.currency)]);
     this.kv(doc, rows);
   }
 
