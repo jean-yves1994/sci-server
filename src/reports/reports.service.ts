@@ -133,6 +133,12 @@ export class ReportsService {
     const mainBuildingValue = rv?.mainBuildingValue != null ? Number(rv.mainBuildingValue) : this.number(codeValues.get('MAIN_BUILDING_VALUE'));
     const totalEstimatedValue = rv?.totalEstimatedValue != null ? Number(rv.totalEstimatedValue) : this.number(codeValues.get(improved ? 'IMPROVED_TOTAL_VALUE' : 'LAND_ESTIMATED_VALUE'));
     const valuation = { currency, landValue, mainBuildingValue, totalEstimatedValue, comments: rv?.comments ?? null };
+    // The forced sale value is a derived report value and is intentionally added
+    // to the Improved property valuation section for both draft and final reports.
+    if (improved && totalEstimatedValue !== null && !fieldValues.some(f => f.section.trim().toLowerCase() === 'improved property valuation' && f.label.trim().toLowerCase() === 'forces sale value')) {
+      fieldValues.push({ section: 'Improved property valuation', sortOrder: 1001, label: 'Forces sale value', value: this.moneyValue(totalEstimatedValue * 0.70, currency) });
+      fieldValues.sort((a, b) => this.reportSectionOrder(a.section) - this.reportSectionOrder(b.section) || a.section.localeCompare(b.section) || this.reportFieldOrder(a.section, a.label) - this.reportFieldOrder(b.section, b.label) || a.sortOrder - b.sortOrder);
+    }
     return {
       organization: { name: inspection.organization.name, legalName: inspection.organization.legalName, addressLine: inspection.organization.addressLine, phone: inspection.organization.phone, email: inspection.organization.email },
       reportNumber, version, generatedAt: new Date(), generatedBy: generatedByName,
@@ -165,6 +171,7 @@ export class ReportsService {
     const normalizedSection = section.trim().toLowerCase();
     const normalizedLabel = label.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\\s+/g, ' ');
     if (normalizedSection.includes('improved property valuation') && normalizedLabel.includes('total estimated value')) return 1000;
+    if (normalizedSection.includes('improved property valuation') && normalizedLabel.includes('forces sale value')) return 1010;
     return 0;
   }
 
@@ -176,6 +183,7 @@ export class ReportsService {
     if (v.valueJson !== null && v.valueJson !== undefined) return v.valueJson;
     return null;
   }
+  private moneyValue(v: number, currency: string) { return `${currency} ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
   private number(v: unknown): number | null { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
   private stringifyValue(v: { valueText: string | null; valueNumber: unknown; valueDate: Date | null; valueBool: boolean | null; valueJson: unknown }): string {
     if (v.valueText) return v.valueText;
