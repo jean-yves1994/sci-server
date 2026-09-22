@@ -123,7 +123,7 @@ export class ReportsService {
 
   private toReportData(inspection: NonNullable<Awaited<ReturnType<ReportsService['loadForReport']>>>, reportNumber: string, version: number, generatedByName: string): ReportData {
     const location = inspection.locations[0];
-    const fieldValues = inspection.values.map(v => ({ section: v.field.section.name, sortOrder: v.field.sortOrder, label: v.field.label, value: this.stringifyValue(v) })).filter(e => e.value !== '').sort((a, b) => a.section.localeCompare(b.section) || a.sortOrder - b.sortOrder);
+    const fieldValues = inspection.values.map(v => ({ section: v.field.section.name, sortOrder: v.field.sortOrder, label: v.field.label, value: this.stringifyValue(v) })).filter(e => e.value !== '').sort((a, b) => this.reportSectionOrder(a.section) - this.reportSectionOrder(b.section) || a.section.localeCompare(b.section) || this.reportFieldOrder(a.section, a.label) - this.reportFieldOrder(b.section, b.label) || a.sortOrder - b.sortOrder);
     const address = [inspection.property.villageStreet, inspection.property.cell, inspection.property.sector, inspection.property.district, inspection.property.province].filter((v): v is string => Boolean(v?.trim())).join(', ');
     const codeValues = new Map(inspection.values.map(v => [v.field.code, this.rawValue(v)]));
     const improved = String(codeValues.get('PROPERTY_STATUS') ?? '').toUpperCase() === 'IMPROVED';
@@ -147,6 +147,25 @@ export class ReportsService {
       photos: inspection.photos.map(p => ({ category: p.category, storageKey: p.storageKey, caption: p.caption, capturedAt: p.capturedAt })),
       reviewerMap: inspection.reviewerMap,
     };
+  }
+
+  private reportSectionOrder(section: string) {
+    const normalized = section.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\\s+/g, ' ');
+    if (normalized.includes('coordinate')) return 10;
+    if (normalized === 'property classification') return 20;
+    if (normalized === 'vacant plot details') return 30;
+    if (normalized === 'main building') return 40;
+    if (normalized.includes('additional buildings') || normalized.includes('annex')) return 50;
+    if (normalized === 'land valuation') return 60;
+    if (normalized.includes('improved property valuation')) return 70;
+    return 100;
+  }
+
+  private reportFieldOrder(section: string, label: string) {
+    const normalizedSection = section.trim().toLowerCase();
+    const normalizedLabel = label.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\\s+/g, ' ');
+    if (normalizedSection.includes('improved property valuation') && normalizedLabel.includes('total estimated value')) return 1000;
+    return 0;
   }
 
   private rawValue(v: { valueText: string | null; valueNumber: unknown; valueDate: Date | null; valueBool: boolean | null; valueJson: unknown }): unknown {
