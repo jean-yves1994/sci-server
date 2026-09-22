@@ -123,7 +123,7 @@ export class ReportsService {
 
   private toReportData(inspection: NonNullable<Awaited<ReturnType<ReportsService['loadForReport']>>>, reportNumber: string, version: number, generatedByName: string): ReportData {
     const location = inspection.locations[0];
-    const fieldValues = inspection.values.map(v => ({ section: v.field.section.name, sortOrder: v.field.sortOrder, label: v.field.label, value: this.stringifyValue(v) })).filter(e => e.value !== '').sort((a, b) => this.reportSectionOrder(a.section) - this.reportSectionOrder(b.section) || a.section.localeCompare(b.section) || this.reportFieldOrder(a.section, a.label) - this.reportFieldOrder(b.section, b.label) || a.sortOrder - b.sortOrder);
+    const fieldValues = inspection.values.map(v => ({ section: v.field.section.name, sortOrder: v.field.sortOrder, label: v.field.label, value: this.stringifyValue({ ...v, field: { type: v.field.type, label: v.field.label } }) })).filter(e => e.value !== '').sort((a, b) => this.reportSectionOrder(a.section) - this.reportSectionOrder(b.section) || a.section.localeCompare(b.section) || this.reportFieldOrder(a.section, a.label) - this.reportFieldOrder(b.section, b.label) || a.sortOrder - b.sortOrder);
     const address = [inspection.property.villageStreet, inspection.property.cell, inspection.property.sector, inspection.property.district, inspection.property.province].filter((v): v is string => Boolean(v?.trim())).join(', ');
     const codeValues = new Map(inspection.values.map(v => [v.field.code, this.rawValue(v)]));
     const improved = String(codeValues.get('PROPERTY_STATUS') ?? '').toUpperCase() === 'IMPROVED';
@@ -185,9 +185,13 @@ export class ReportsService {
   }
   private moneyValue(v: number, currency: string) { return `${currency} ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
   private number(v: unknown): number | null { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
-  private stringifyValue(v: { valueText: string | null; valueNumber: unknown; valueDate: Date | null; valueBool: boolean | null; valueJson: unknown }): string {
+  private stringifyValue(v: { valueText: string | null; valueNumber: unknown; valueDate: Date | null; valueBool: boolean | null; valueJson: unknown; field?: { type?: string | null; label?: string | null } }): string {
     if (v.valueText) return v.valueText;
-    if (v.valueNumber !== null && v.valueNumber !== undefined) return String(v.valueNumber);
+    if (v.valueNumber !== null && v.valueNumber !== undefined) {
+      const numeric = Number(v.valueNumber);
+      if (Number.isFinite(numeric) && v.field?.type === 'CURRENCY') return 'RWF ' + numeric.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return String(v.valueNumber);
+    }
     if (v.valueDate) return new Date(v.valueDate).toLocaleDateString('en-GB');
     if (v.valueBool !== null && v.valueBool !== undefined) return v.valueBool ? 'Yes' : 'No';
     if (Array.isArray(v.valueJson)) return v.valueJson.join(', ');
