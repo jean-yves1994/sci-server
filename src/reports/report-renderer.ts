@@ -266,6 +266,6 @@ export class ReportRenderer {
   }
 
   private human(v: string | null) { if (!v) return '—'; return v.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
-  private money(v: number | null, c: string) { return v === null ? '—' : `${c} ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+  private money(v: number | null, _c: string) { return v === null ? '—' : `RWF ${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
   private dt(v: Date) { return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Africa/Kigali' }).format(v); }
 }
