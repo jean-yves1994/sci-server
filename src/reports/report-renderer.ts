@@ -155,8 +155,6 @@ export class ReportRenderer {
     if (v.landValue !== null) rows.push(['Land value', this.money(v.landValue, v.currency)]);
     if (v.mainBuildingValue !== null) rows.push(['Main building value', this.money(v.mainBuildingValue, v.currency)]);
     rows.push(['Total estimated value', this.money(v.totalEstimatedValue, v.currency)]);
-    const forcedSaleValue = v.totalEstimatedValue !== null ? v.totalEstimatedValue * 0.70 : null;
-    rows.push(['Forces sale value', this.money(forcedSaleValue, v.currency)]);
     this.kv(doc, rows);
   }
 
