@@ -127,26 +127,18 @@ export class ReportRenderer {
 
   private statusInformation(doc: PDFKit.PDFDocument, data: ReportData) {
     this.section(doc, 'Status Information');
-    const rows: Array<[string, string | null]> = [
-      ['Mortgage status', data.statusInformation.mortgageStatus ? this.statusLabel(data.statusInformation.mortgageStatus) : null],
-      ['Restriction status', data.statusInformation.restrictionStatus ? this.statusLabel(data.statusInformation.restrictionStatus) : null],
-      ['Process status', data.statusInformation.processStatus ? this.statusLabel(data.statusInformation.processStatus) : null],
-      ['Remaining lease term', data.statusInformation.remainingLeaseTermMonths !== null ? `${data.statusInformation.remainingLeaseTermMonths.toLocaleString('en-US')} months` : null],
+    const rows: Array<[string, string | null, boolean]> = [
+      ['Mortgage status', data.statusInformation.mortgageStatus ? this.statusLabel(data.statusInformation.mortgageStatus) : null, data.statusInformation.mortgageStatus === 'NOT_UNDER_MORTGAGE'],
+      ['Restriction status', data.statusInformation.restrictionStatus ? this.statusLabel(data.statusInformation.restrictionStatus) : null, data.statusInformation.restrictionStatus === 'NOT_UNDER_RESTRICTION'],
+      ['Process status', data.statusInformation.processStatus ? this.statusLabel(data.statusInformation.processStatus) : null, data.statusInformation.processStatus === 'NOT_UNDER_PROCESS'],
+      ['Remaining lease term', data.statusInformation.remainingLeaseTermMonths !== null ? `${data.statusInformation.remainingLeaseTermMonths.toLocaleString('en-US')} months` : null, false],
     ];
-    for (const [label, value] of rows) {
-      this.ensure(doc, 28);
+    for (const [label, value, notUnderStatus] of rows) {
+      this.ensure(doc, 22);
       const y = doc.y;
-      doc.font('Helvetica').fontSize(8).fillColor(C.muted).text(label, MARGIN + 6, y + 4, { width: 150, lineBreak: false });
-      if (value === null) {
-        doc.font('Helvetica').fontSize(9).fillColor(C.muted).text('Not recorded', MARGIN + 160, y + 4, { width: CONTENT_WIDTH - 166, lineBreak: false });
-      } else {
-        const positive = value.startsWith('This Parcel Is Not Under');
-        const fill = positive ? '#166534' : '#b91c1c';
-        const bg = positive ? '#dcfce7' : '#fee2e2';
-        doc.roundedRect(MARGIN + 158, y, CONTENT_WIDTH - 164, 22, 5).fill(bg);
-        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(fill).text(value, MARGIN + 166, y + 6, { width: CONTENT_WIDTH - 180, lineBreak: false, ellipsis: true });
-      }
-      doc.y = y + 30;
+      doc.font('Helvetica').fontSize(7.5).fillColor(C.muted).text(label, MARGIN + 6, y, { width: 150, lineBreak: false });
+      doc.font('Helvetica').fontSize(9).fillColor(value === null ? C.muted : notUnderStatus ? '#166534' : label === 'Remaining lease term' ? C.ink : '#b91c1c').text(value ?? 'Not recorded', MARGIN + 160, y, { width: CONTENT_WIDTH - 166, ellipsis: true, lineBreak: false });
+      doc.moveDown(0.45);
     }
   }
 
