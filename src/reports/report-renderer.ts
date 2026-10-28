@@ -11,7 +11,7 @@ export interface ReportData {
   owner: { fullName: string; phone: string | null; email: string | null; occupancyStatus: string | null; ownershipType: string | null } | null;
   people: { inspector: string | null; reviewer: string | null };
   location: { latitude: number; longitude: number; accuracyM: number | null; capturedAt: Date; distanceFromPropertyM: number | null } | null;
-  assessments: Array<{ categoryName: string; rating: number | null; condition: string | null; notes: string | null }>;
+  statusInformation: { mortgageStatus: string | null; restrictionStatus: string | null; processStatus: string | null; remainingLeaseTermMonths: number | null };
   valuation: { currency: string; landValue: number | null; mainBuildingValue: number | null; totalEstimatedValue: number | null; comments: string | null } | null;
   fieldValues: Array<{ section: string; label: string; value: string }>;
   photos: Array<{ category: string; storageKey: string; caption: string | null; capturedAt: Date | null }>;
@@ -46,7 +46,7 @@ export class ReportRenderer {
     this.owner(doc, data);
     this.location(doc, data);
     this.fields(doc, data);
-    this.assessments(doc, data);
+    this.statusInformation(doc, data);
     if (data.reportNumber.startsWith('DRF-')) this.estimation(doc, data);
     await this.reviewerMap(doc, data);
     await this.photos(doc, data);
@@ -125,26 +125,38 @@ export class ReportRenderer {
     return /\bplot\s*(number|no|num)\b/.test(normalized) || normalized.includes('plot no.');
   }
 
-  private assessments(doc: PDFKit.PDFDocument, data: ReportData) {
-    this.section(doc, 'Condition assessment');
-    if (!data.assessments.length) { this.note(doc, 'No assessment categories were recorded.'); return; }
-    const x1 = MARGIN + 6, x2 = MARGIN + 210, x3 = MARGIN + 285;
-    this.ensure(doc, 26);
-    doc.rect(MARGIN, doc.y, CONTENT_WIDTH, 18).fill(C.panel);
-    doc.fillColor(C.muted).font('Helvetica-Bold').fontSize(7.5);
-    doc.text('CATEGORY', x1, doc.y + 5.5); doc.text('RATING', x2, doc.y + 5.5); doc.text('CONDITION', x3, doc.y + 5.5);
-    doc.y += 22;
-    for (const a of data.assessments) {
-      this.ensure(doc, 30);
+  private statusInformation(doc: PDFKit.PDFDocument, data: ReportData) {
+    this.section(doc, 'Status Information');
+    const rows: Array<[string, string | null]> = [
+      ['Mortgage status', data.statusInformation.mortgageStatus ? this.statusLabel(data.statusInformation.mortgageStatus) : null],
+      ['Restriction status', data.statusInformation.restrictionStatus ? this.statusLabel(data.statusInformation.restrictionStatus) : null],
+      ['Process status', data.statusInformation.processStatus ? this.statusLabel(data.statusInformation.processStatus) : null],
+      ['Remaining lease term', data.statusInformation.remainingLeaseTermMonths !== null ? `${data.statusInformation.remainingLeaseTermMonths.toLocaleString('en-US')} months` : null],
+    ];
+    for (const [label, value] of rows) {
+      this.ensure(doc, 28);
       const y = doc.y;
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(C.ink).text(a.categoryName, x1, y, { width: 195 });
-      doc.font('Helvetica').fontSize(9).text(a.rating !== null ? `${a.rating} / 5` : '—', x2, y, { width: 70 });
-      doc.text(this.human(a.condition), x3, y, { width: 120 });
-      let bottom = Math.max(doc.y, y + 12);
-      if (a.notes) { doc.font('Helvetica-Oblique').fontSize(8).fillColor(C.muted).text(a.notes, x1, bottom + 2, { width: CONTENT_WIDTH - 12 }); bottom = doc.y; }
-      doc.moveTo(MARGIN, bottom + 5).lineTo(MARGIN + CONTENT_WIDTH, bottom + 5).strokeColor(C.rule).lineWidth(0.4).stroke();
-      doc.y = bottom + 11;
+      doc.font('Helvetica').fontSize(8).fillColor(C.muted).text(label, MARGIN + 6, y + 4, { width: 150, lineBreak: false });
+      if (value === null) {
+        doc.font('Helvetica').fontSize(9).fillColor(C.muted).text('Not recorded', MARGIN + 160, y + 4, { width: CONTENT_WIDTH - 166, lineBreak: false });
+      } else {
+        const positive = value.startsWith('This Parcel Is Not Under');
+        const fill = positive ? '#166534' : '#b91c1c';
+        const bg = positive ? '#dcfce7' : '#fee2e2';
+        doc.roundedRect(MARGIN + 158, y, CONTENT_WIDTH - 164, 22, 5).fill(bg);
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(fill).text(value, MARGIN + 166, y + 6, { width: CONTENT_WIDTH - 180, lineBreak: false, ellipsis: true });
+      }
+      doc.y = y + 30;
     }
+  }
+
+  private statusLabel(value: string): string {
+    const labels: Record<string, string> = {
+      UNDER_MORTGAGE: 'This Parcel Is Under Mortgage', NOT_UNDER_MORTGAGE: 'This Parcel Is Not Under Mortgage',
+      UNDER_RESTRICTION: 'This Parcel Is Under Restriction', NOT_UNDER_RESTRICTION: 'This Parcel Is Not Under Restriction',
+      UNDER_PROCESS: 'This Parcel Is Under Process', NOT_UNDER_PROCESS: 'This Parcel Is Not Under Process',
+    };
+    return labels[value] ?? value.replace(/_/g, ' ');
   }
 
   private estimation(doc: PDFKit.PDFDocument, data: ReportData) {
