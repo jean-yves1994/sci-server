@@ -513,6 +513,10 @@ model Inspection {
   submissionCount Int @default(0)
   version Int @default(1)
   clientRequestId String?
+  mortgageStatus String?
+  restrictionStatus String?
+  processStatus String?
+  remainingLeaseTermMonths Int?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
