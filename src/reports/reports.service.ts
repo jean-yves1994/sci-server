@@ -141,7 +141,7 @@ export class ReportsService {
       owner: inspection.owner ? { fullName: inspection.owner.fullName, phone: inspection.owner.phone, email: inspection.owner.email, occupancyStatus: inspection.owner.occupancyStatus, ownershipType: inspection.owner.ownershipType } : null,
       people: { inspector: inspection.inspector ? `${inspection.inspector.firstName} ${inspection.inspector.lastName}` : null, reviewer: inspection.reviewer ? `${inspection.reviewer.firstName} ${inspection.reviewer.lastName}` : null },
       location: location ? { latitude: Number(location.latitude), longitude: Number(location.longitude), accuracyM: location.accuracyM, capturedAt: location.capturedAt, distanceFromPropertyM: location.distanceFromPropertyM } : null,
-      assessments: inspection.assessments.map(a => ({ categoryName: a.categoryName, rating: a.rating, condition: a.condition, notes: a.notes })),
+      statusInformation: { mortgageStatus: inspection.mortgageStatus ?? null, restrictionStatus: inspection.restrictionStatus ?? null, processStatus: inspection.processStatus ?? null, remainingLeaseTermMonths: inspection.remainingLeaseTermMonths ?? null },
       valuation,
       fieldValues: fieldValues.map(({ section, label, value }) => ({ section, label, value })),
       photos: inspection.photos.map(p => ({ category: p.category, storageKey: p.storageKey, caption: p.caption, capturedAt: p.capturedAt })),
