@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, IsArray, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, Min,
+  ArrayMaxSize, IsArray, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, Min,
 } from 'class-validator';
 
 export class ApproveDto {
@@ -63,6 +63,27 @@ export class ReviewerRiskDto {
 export class ReviewerConclusionDto {
   @ApiProperty() @IsString() @IsNotEmpty() @MaxLength(8000)
   conclusion: string;
+
+  @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(1) @IsOptional()
+  baseVersion?: number;
+}
+
+export class ReviewerStatusInformationDto {
+  @ApiPropertyOptional({ enum: ['UNDER_MORTGAGE', 'NOT_UNDER_MORTGAGE'], nullable: true })
+  @IsOptional() @IsIn(['UNDER_MORTGAGE', 'NOT_UNDER_MORTGAGE'])
+  mortgageStatus?: 'UNDER_MORTGAGE' | 'NOT_UNDER_MORTGAGE' | null;
+
+  @ApiPropertyOptional({ enum: ['UNDER_RESTRICTION', 'NOT_UNDER_RESTRICTION'], nullable: true })
+  @IsOptional() @IsIn(['UNDER_RESTRICTION', 'NOT_UNDER_RESTRICTION'])
+  restrictionStatus?: 'UNDER_RESTRICTION' | 'NOT_UNDER_RESTRICTION' | null;
+
+  @ApiPropertyOptional({ enum: ['UNDER_PROCESS', 'NOT_UNDER_PROCESS'], nullable: true })
+  @IsOptional() @IsIn(['UNDER_PROCESS', 'NOT_UNDER_PROCESS'])
+  processStatus?: 'UNDER_PROCESS' | 'NOT_UNDER_PROCESS' | null;
+
+  @ApiPropertyOptional({ description: 'Remaining lease term in whole months; null if not applicable.' })
+  @Type(() => Number) @IsInt() @Min(0) @IsOptional()
+  remainingLeaseTermMonths?: number | null;
 
   @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(1) @IsOptional()
   baseVersion?: number;
