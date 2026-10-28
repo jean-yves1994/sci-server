@@ -20,7 +20,7 @@
     "db:sync-permissions": "ts-node -T prisma/sync-permissions.ts",
     "db:reset": "prisma db push --force-reset && npm run db:seed",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && prisma migrate deploy && npm run db:sync-permissions && nest build"
+    "vercel-build": "node scripts/diagnose-db-urls.mjs && prisma generate && prisma migrate deploy && npm run db:sync-permissions && nest build"
   },
   "dependencies": {
     "@nestjs/cli": "^11.0.0",
