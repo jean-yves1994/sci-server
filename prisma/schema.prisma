@@ -13,7 +13,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Use pooled DATABASE_URL for application traffic and a direct, non-pooler
+  // connection for migrations to avoid advisory-lock timeouts through PgBouncer.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum RecordStatus {
