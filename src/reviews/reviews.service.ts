@@ -225,7 +225,7 @@ export class ReviewsService {
     const created = await this.prisma.runInTransaction(async (tx) => {
       const row = await tx.$queryRaw<Array<Record<string, unknown>>>`
         INSERT INTO reviewer_adjustments (inspection_id, reviewer_id, field_code, original_value, adjusted_value, reason)
-        VALUES (${id}, ${user.userId}, ${fieldCode}, ${JSON.stringify(original)}::jsonb, ${JSON.stringify(dto.adjustedValue)}::jsonb, ${dto.reason.trim()})
+        VALUES (${id}, ${user.userId}, ${fieldCode}, ${JSON.stringify(original)}::jsonb, ${JSON.stringify(dto.adjustedValue)}::jsonb, ${dto.reason?.trim() || null})
         RETURNING id, field_code AS "fieldCode", original_value AS "originalValue", adjusted_value AS "adjustedValue", reason, created_at AS "createdAt"`;
       await tx.inspection.update({ where: { id }, data: { version: { increment: 1 } } });
       await this.audit.record(
@@ -237,7 +237,7 @@ export class ReviewsService {
           entityId: id,
           previousValue: original,
           newValue: dto.adjustedValue,
-          metadata: { fieldCode, reason: dto.reason.trim() },
+          metadata: { fieldCode, reason: dto.reason?.trim() || null },
           meta,
         },
         tx,
@@ -357,6 +357,44 @@ export class ReviewsService {
       }
       if (!review?.reviewerConclusion?.trim()) {
         throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Enter the professional reviewer conclusion before approving the inspection.');
+      }
+
+      const requirements = await this.prisma.$queryRaw<Array<{
+        mortgageStatus: string | null;
+        restrictionStatus: string | null;
+        processStatus: string | null;
+        landValue: string | number | null;
+        mainBuildingValue: string | number | null;
+        totalEstimatedValue: string | number | null;
+        propertyStatus: string | null;
+        hasMapImage: boolean;
+      }>>`
+        SELECT i."mortgageStatus", i."restrictionStatus", i."processStatus",
+               rv.land_value AS "landValue",
+               rv.main_building_value AS "mainBuildingValue",
+               rv.total_estimated_value AS "totalEstimatedValue",
+               (SELECT COALESCE(iv."valueText", iv."valueJson" #>> '{}')
+                  FROM inspection_values iv
+                  JOIN template_fields tf ON tf.id = iv."fieldId"
+                 WHERE iv."inspectionId" = i.id AND tf.code = 'PROPERTY_STATUS'
+                 LIMIT 1) AS "propertyStatus",
+               EXISTS (SELECT 1 FROM reviewer_map_images mi WHERE mi.inspection_id = i.id) AS "hasMapImage"
+          FROM inspections i
+          LEFT JOIN reviewer_valuations rv ON rv.inspection_id = i.id
+         WHERE i.id = ${id}`;
+
+      const required = requirements[0];
+      if (required?.landValue === null || required?.landValue === undefined ||
+          required?.totalEstimatedValue === null || required?.totalEstimatedValue === undefined ||
+          (String(required.propertyStatus ?? '').toUpperCase() === 'IMPROVED' &&
+           (required.mainBuildingValue === null || required.mainBuildingValue === undefined))) {
+        throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Save the complete professional estimation before approving the inspection.');
+      }
+      if (!required?.hasMapImage) {
+        throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Upload the reviewer map image before approving the inspection.');
+      }
+      if (!required.mortgageStatus || !required.restrictionStatus || !required.processStatus) {
+        throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Complete and save all parcel Status Information before approving the inspection.');
       }
       if (!inspection.reviewerId || inspection.reviewerId !== user.userId) {
         throw new ForbiddenError('A professional reviewer must be assigned before approval.', ErrorCode.AUTH_FORBIDDEN);
