@@ -363,13 +363,14 @@ export class ReviewsService {
         mortgageStatus: string | null;
         restrictionStatus: string | null;
         processStatus: string | null;
+        remainingLeaseTermMonths: number | null;
         landValue: string | number | null;
         mainBuildingValue: string | number | null;
         totalEstimatedValue: string | number | null;
         propertyStatus: string | null;
         hasMapImage: boolean;
       }>>`
-        SELECT i."mortgageStatus", i."restrictionStatus", i."processStatus",
+        SELECT i."mortgageStatus", i."restrictionStatus", i."processStatus", i."remainingLeaseTermMonths",
                rv.land_value AS "landValue",
                rv.main_building_value AS "mainBuildingValue",
                rv.total_estimated_value AS "totalEstimatedValue",
@@ -393,7 +394,7 @@ export class ReviewsService {
       if (!required?.hasMapImage) {
         throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Upload the reviewer map image before approving the inspection.');
       }
-      if (!required.mortgageStatus || !required.restrictionStatus || !required.processStatus) {
+      if (!required.mortgageStatus || !required.restrictionStatus || !required.processStatus || required.remainingLeaseTermMonths === null || required.remainingLeaseTermMonths === undefined) {
         throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Complete and save all parcel Status Information before approving the inspection.');
       }
       if (!inspection.reviewerId || inspection.reviewerId !== user.userId) {
