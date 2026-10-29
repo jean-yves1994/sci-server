@@ -40,9 +40,9 @@ export class ReviewerAdjustmentDto {
   @IsObject()
   adjustedValue: Record<string, unknown>;
 
-  @ApiProperty({ description: 'Professional reason for changing the submitted value.' })
-  @IsString() @IsNotEmpty() @MaxLength(2000)
-  reason: string;
+  @ApiPropertyOptional({ description: 'Optional professional reason for changing the submitted value.' })
+  @IsString() @IsOptional() @MaxLength(2000)
+  reason?: string;
 
   @ApiPropertyOptional() @Type(() => Number) @IsInt() @Min(1) @IsOptional()
   baseVersion?: number;
