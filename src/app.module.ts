@@ -23,6 +23,7 @@ import { SyncModule } from './sync/sync.module';
 import { TemplatesModule } from './templates/templates.module';
 import { UsersModule } from './users/users.module';
 import { PaymentsModule } from './payments/payments.module';
+import { LocationsModule } from './locations/locations.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { PaymentsModule } from './payments/payments.module';
     FilesModule,
     HealthModule,
     PaymentsModule,
+    LocationsModule,
   ],
   providers: [
     // Order matters: authentication populates the security context that the
