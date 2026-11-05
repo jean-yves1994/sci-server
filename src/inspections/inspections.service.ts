@@ -995,6 +995,7 @@ export class InspectionsService {
     return this.prisma.inspection.findFirst({
       where: { id, organizationId, deletedAt: null },
       include: {
+        property: { select: { propertyType: true } },
         owner: true,
         valuation: true,
         assessments: true,
@@ -1012,6 +1013,7 @@ export class InspectionsService {
   }
 
   private computeCompleteness(inspection: {
+    property: { propertyType: string };
     template: {
       sections: Array<{
         code: string;
@@ -1056,8 +1058,37 @@ export class InspectionsService {
       photoCountsByCategory[photo.category] = (photoCountsByCategory[photo.category] ?? 0) + 1;
     }
 
+    const valueById = new Map(inspection.values.map((value) => [value.fieldId, value]));
+    const fieldByCode = new Map(
+      inspection.template.sections.flatMap((section) =>
+        section.fields.map((field) => [field.code, field] as const),
+      ),
+    );
+    const rawForCode = (code: string): unknown => {
+      const field = fieldByCode.get(code);
+      if (!field) return undefined;
+      const value = valueById.get(field.id);
+      if (!value) return undefined;
+      return value.valueText ?? value.valueNumber ?? value.valueBool ??
+        value.valueDate ?? value.valueJson;
+    };
+    const propertyStatus = String(rawForCode('PROPERTY_STATUS') ?? '').trim().toUpperCase();
+    const propertyUse = String(rawForCode('PROPERTY_USE') ?? '').trim().toUpperCase();
+    const propertyType = inspection.property.propertyType.trim().toUpperCase();
+    const isLandProperty = propertyType === 'LAND' ||
+      ['VACANT_PLOT', 'LAND', 'VACANT LAND'].includes(propertyStatus);
+    const isResidential = propertyUse === 'RESIDENTIAL';
+
+    const applicableSections = inspection.template.sections.filter((section) => {
+      if (isLandProperty && ['MAIN_BUILDING', 'ADDITIONAL_BUILDINGS', 'IMPROVED_VALUATION'].includes(section.code)) return false;
+      if (isLandProperty && section.code.startsWith('ANNEX_')) return false;
+      if (!isLandProperty && section.code === 'LAND_VALUATION') return false;
+      if (isResidential && section.code === 'VACANT_LAND') return false;
+      return true;
+    });
+
     return evaluateCompleteness({
-      sections: inspection.template.sections.map((section) => ({
+      sections: applicableSections.map((section) => ({
         code: section.code,
         name: section.name,
         isAssessment: section.isAssessment,
