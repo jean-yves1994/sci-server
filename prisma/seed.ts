@@ -86,6 +86,10 @@ const TEMPLATE_SECTIONS = [
           { value: 'INDUSTRIAL', label: 'Industrial' },
           { value: 'LAND', label: 'Vacant land' },
         ] },
+      // The Flutter inspector renders this numeric field as a bounded 0–4 dropdown.
+      // Keeping its wire type NUMBER ensures the selected count is stored in valueNumber.
+      { code: 'ANNEX_COUNT', label: 'Number of annexes', type: 'NUMBER', required: true,
+        validation: { min: 0, max: 4 } },
       { code: 'PLOT_SIZE_SQM', label: 'Plot size (m²)', type: 'NUMBER', required: true,
         validation: { min: 1, max: 1_000_000 } },
       { code: 'BUILT_AREA_SQM', label: 'Built area (m²)', type: 'NUMBER', required: false,
