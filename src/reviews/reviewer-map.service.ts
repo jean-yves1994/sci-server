@@ -5,7 +5,7 @@ import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '.
 import { ErrorCode } from '../common/errors/error-codes';
 import { sha256 } from '../common/utils/crypto.util';
 import { RequestMetadata, TenantContext, canAccessBranch } from '../common/tenant-context';
-import { PrismaService } from '../database/prisma.service';
+import { PrismaService, PrismaTransactionClient } from '../database/prisma.service';
 import { StorageProvider } from '../providers/storage/storage.provider';
 
 const MAX_MAP_BYTES = 15 * 1024 * 1024;
@@ -90,7 +90,7 @@ export class ReviewerMapService {
     return inspection;
   }
 
-  private async lockReviewerOwnership(tx: import('../database/prisma.service').PrismaTransactionClient, inspectionId: string, userId: string) {
+  private async lockReviewerOwnership(tx: PrismaTransactionClient, inspectionId: string, userId: string) {
     const rows = await tx.$queryRaw<Array<{ reviewerId: string | null }>>`
       SELECT "reviewerId" FROM inspections WHERE id = ${inspectionId} FOR UPDATE
     `;
