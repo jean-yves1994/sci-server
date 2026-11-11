@@ -232,6 +232,7 @@ export class ReviewsService {
     };
 
     const created = await this.prisma.runInTransaction(async (tx) => {
+      await this.lockReviewerOwnership(tx, id, user.userId);
       const row = await tx.$queryRaw<Array<Record<string, unknown>>>`
         INSERT INTO reviewer_adjustments (inspection_id, reviewer_id, field_code, original_value, adjusted_value, reason)
         VALUES (${id}, ${user.userId}, ${fieldCode}, ${JSON.stringify(original)}::jsonb, ${JSON.stringify(dto.adjustedValue)}::jsonb, ${dto.reason?.trim() || null})
@@ -265,6 +266,7 @@ export class ReviewsService {
     }
 
     await this.prisma.runInTransaction(async (tx) => {
+      await this.lockReviewerOwnership(tx, id, user.userId);
       await tx.$executeRaw`UPDATE inspections SET "reviewerRisk" = ${JSON.stringify({ level, comments: dto.comments?.trim() ?? null })}::jsonb, "reviewerAdjustedAt" = CURRENT_TIMESTAMP, version = version + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ${id}`;
       await this.audit.record(
         {
@@ -288,6 +290,7 @@ export class ReviewsService {
     const conclusion = dto.conclusion.trim();
 
     await this.prisma.runInTransaction(async (tx) => {
+      await this.lockReviewerOwnership(tx, id, user.userId);
       await tx.$executeRaw`UPDATE inspections SET "reviewerConclusion" = ${conclusion}, "reviewerAdjustedAt" = CURRENT_TIMESTAMP, version = version + 1, "updatedAt" = CURRENT_TIMESTAMP WHERE id = ${id}`;
       await this.audit.record(
         {
@@ -528,28 +531,47 @@ export class ReviewsService {
     if (user.permissions.has('reviews.decide') && !isAdmin && inspection.reviewerId !== user.userId) {
       throw new ForbiddenError('Only the assigned reviewer can add review comments to this inspection.', ErrorCode.AUTH_FORBIDDEN);
     }
-    const comment = await this.prisma.inspectionComment.create({
-      data: {
-        inspectionId: id,
-        authorId: user.userId,
-        body: dto.body.trim(),
-        type: CommentType.REVIEWER_NOTE,
-      },
-      include: {
-        author: {
-          select: { id: true, firstName: true, lastName: true },
+    const comment = await this.prisma.runInTransaction(async (tx) => {
+      if (user.permissions.has('reviews.decide') && !isAdmin) {
+        await this.lockReviewerOwnership(tx, id, user.userId);
+      }
+      const created = await tx.inspectionComment.create({
+        data: {
+          inspectionId: id,
+          authorId: user.userId,
+          body: dto.body.trim(),
+          type: CommentType.REVIEWER_NOTE,
         },
-      },
-    });
-    await this.audit.record({
-      organizationId: user.organizationId,
-      userId: user.userId,
-      action: 'INSPECTION_COMMENT_ADDED',
-      entityType: 'Inspection',
-      entityId: id,
-      meta,
+        include: {
+          author: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+        },
+      });
+      await this.audit.record({
+        organizationId: user.organizationId,
+        userId: user.userId,
+        action: 'INSPECTION_COMMENT_ADDED',
+        entityType: 'Inspection',
+        entityId: id,
+        meta,
+      }, tx);
+      return created;
     });
     return comment;
+  }
+
+  private async lockReviewerOwnership(
+    tx: Parameters<Parameters<PrismaService['runInTransaction']>[0]>[0],
+    id: string,
+    userId: string,
+  ): Promise<void> {
+    const rows = await tx.$queryRaw<Array<{ reviewerId: string | null }>>`
+      SELECT "reviewerId" FROM inspections WHERE id = ${id} FOR UPDATE
+    `;
+    if (!rows[0] || rows[0].reviewerId !== userId) {
+      throw new ForbiddenError('This inspection is no longer assigned to you for review.', ErrorCode.AUTH_FORBIDDEN);
+    }
   }
 
   private commentTypeFor(action: InspectionAction): CommentType {
