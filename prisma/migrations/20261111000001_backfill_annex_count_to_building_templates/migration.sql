@@ -16,11 +16,15 @@ BEGIN
           AND main_building.code = 'MAIN_BUILDING'
       )
   LOOP
-    UPDATE template_fields
-      SET "sortOrder" = "sortOrder" + 1
-      WHERE "sectionId" = property_section.id
-        AND "sortOrder" >= 2
-        AND code <> 'ANNEX_COUNT';
+    IF NOT EXISTS (
+      SELECT 1 FROM template_fields
+      WHERE "sectionId" = property_section.id AND code = 'ANNEX_COUNT'
+    ) THEN
+      UPDATE template_fields
+        SET "sortOrder" = "sortOrder" + 1
+        WHERE "sectionId" = property_section.id
+          AND "sortOrder" >= 2;
+    END IF;
 
     INSERT INTO template_fields (
       id, "sectionId", code, label, type, required, "sortOrder", options, validation, "helpText"
