@@ -71,11 +71,13 @@ export class InspectionsService {
       ...(query.status?.length ? { status: { in: query.status } } : {}),
       ...(query.branchId ? { branchId: query.branchId } : {}),
       ...(query.inspectorId ? { inspectorId: query.inspectorId } : {}),
-      ...(isAdmin(user)
-        ? (query.reviewerId ? { reviewerId: query.reviewerId } : {})
-        : user.permissions.has('reviews.decide')
-          ? { reviewerId: user.userId }
-          : (query.reviewerId ? { reviewerId: query.reviewerId } : {})),
+      ...(query.reviewerId === '__UNCLAIMED__'
+        ? { reviewerId: null }
+        : isAdmin(user)
+          ? (query.reviewerId ? { reviewerId: query.reviewerId } : {})
+          : user.permissions.has('reviews.decide')
+            ? { reviewerId: user.userId }
+            : (query.reviewerId ? { reviewerId: query.reviewerId } : {})),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.assignedToMe ? { inspectorId: user.userId } : {}),
       ...(query.propertyType ? { property: { propertyType: query.propertyType } } : {}),
