@@ -8,7 +8,7 @@ import { ErrorCode } from '../common/errors/error-codes';
 import { RequestMetadata, TenantContext } from '../common/tenant-context';
 import { ReportsService } from '../reports/reports.service';
 import {
-  AssignInspectionDto, CaptureLocationDto, CreateInspectionDto, InspectionQueryDto,
+  AssignInspectionDto, ReviewerAssignmentDto, CaptureLocationDto, CreateInspectionDto, InspectionQueryDto,
   SaveAssessmentDto, SaveOwnerDto, SaveValuationDto, SaveValuesDto,
 } from './dto/inspection.dto';
 import { InspectionsService } from './inspections.service';
@@ -92,6 +92,18 @@ export class InspectionsController {
     @ClientMeta() meta: RequestMetadata,
   ) {
     return this.inspections.assign(user, id, dto, meta);
+  }
+
+  @Patch(':id/reviewer')
+  @RequirePermissions('inspections.assign')
+  @ApiOperation({ summary: 'Administrator assigns or reassigns the professional reviewer' })
+  assignReviewer(
+    @CurrentUser() user: TenantContext,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReviewerAssignmentDto,
+    @ClientMeta() meta: RequestMetadata,
+  ) {
+    return this.inspections.assignReviewer(user, id, dto, meta);
   }
 
   @Post(':id/start')
