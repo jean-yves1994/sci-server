@@ -81,6 +81,10 @@ export class ReviewerMapService {
     const inspection = await this.prisma.inspection.findFirst({ where: { id: inspectionId, organizationId: user.organizationId, deletedAt: null }, select: { id: true, branchId: true, reviewerId: true, status: true, version: true } });
     if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
     if (!canAccessBranch(user, inspection.branchId)) throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (user.permissions.has('reviews.decide') && !isAdmin && inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Reviewers can only access map images for inspections assigned to themselves.', ErrorCode.AUTH_FORBIDDEN);
+    }
     return inspection;
   }
 
