@@ -44,6 +44,13 @@ import {
   isEditable,
 } from './domain/inspection-state-machine';
 
+const FINAL_REVIEW_ASSIGNMENT_STATUSES: InspectionStatus[] = [
+  InspectionStatus.APPROVED,
+  InspectionStatus.REPORT_GENERATED,
+  InspectionStatus.REJECTED,
+  InspectionStatus.ARCHIVED,
+];
+
 function isAdmin(user: TenantContext): boolean {
   return user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
 }
@@ -484,7 +491,7 @@ export class InspectionsService {
     if (!canAccessBranch(user, inspection.branchId)) {
       throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
     }
-    if ([InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED, InspectionStatus.REJECTED, InspectionStatus.ARCHIVED].includes(inspection.status)) {
+    if (FINAL_REVIEW_ASSIGNMENT_STATUSES.includes(inspection.status)) {
       throw new BadRequestError(ErrorCode.INSPECTION_INVALID_TRANSITION, 'A completed or rejected inspection cannot be reassigned for review.');
     }
 
