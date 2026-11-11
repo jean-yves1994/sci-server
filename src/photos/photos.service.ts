@@ -71,11 +71,15 @@ export class PhotosService {
 
     const inspection = await this.prisma.inspection.findFirst({
       where: { id: inspectionId, organizationId: user.organizationId, deletedAt: null },
-      select: { id: true, branchId: true, inspectorId: true, status: true, inspectionNumber: true },
+      select: { id: true, branchId: true, inspectorId: true, reviewerId: true, status: true, inspectionNumber: true },
     });
 
     if (!inspection) {
       throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+    }
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (user.permissions.has('reviews.decide') && !isAdmin && inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Reviewers can only change photographs on inspections assigned to themselves.', ErrorCode.AUTH_FORBIDDEN);
     }
     if (inspection.inspectorId !== user.userId) {
       throw new ForbiddenError(
@@ -192,13 +196,17 @@ export class PhotosService {
       where: { id: photoId, deletedAt: null },
       include: {
         inspection: {
-          select: { id: true, organizationId: true, inspectorId: true, status: true },
+          select: { id: true, organizationId: true, inspectorId: true, reviewerId: true, status: true },
         },
       },
     });
 
     if (!photo || photo.inspection.organizationId !== user.organizationId) {
       throw new NotFoundError(ErrorCode.NOT_FOUND, 'Photograph not found.');
+    }
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (user.permissions.has('reviews.decide') && !isAdmin && photo.inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Reviewers can only change photographs on inspections assigned to themselves.', ErrorCode.AUTH_FORBIDDEN);
     }
     if (photo.inspection.inspectorId !== user.userId) {
       throw new ForbiddenError(
