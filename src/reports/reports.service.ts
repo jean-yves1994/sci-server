@@ -13,6 +13,20 @@ import { ReportData, ReportRenderer } from './report-renderer';
 
 const DOWNLOAD_TTL_SECONDS = 300;
 
+function isAdministrator(user: TenantContext): boolean {
+  return user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+}
+
+function isReviewer(user: TenantContext): boolean {
+  return user.permissions.has('reviews.decide') && !isAdministrator(user);
+}
+
+function assertReviewerAssignment(user: TenantContext, reviewerId: string | null, action: string): void {
+  if (isReviewer(user) && reviewerId !== user.userId) {
+    throw new ForbiddenError(`Only the assigned reviewer can ${action} for this inspection.`, ErrorCode.AUTH_FORBIDDEN);
+  }
+}
+
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
@@ -21,6 +35,7 @@ export class ReportsService {
   async generateDraft(user: TenantContext, inspectionId: string, meta: RequestMetadata) {
     const inspection = await this.loadForReport(user.organizationId, inspectionId);
     if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+    assertReviewerAssignment(user, inspection.reviewerId, 'generate a draft report');
     const statuses: InspectionStatus[] = [InspectionStatus.SUBMITTED, InspectionStatus.UNDER_REVIEW, InspectionStatus.RESUBMITTED, InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED];
     if (!statuses.includes(inspection.status)) throw new BadRequestError(ErrorCode.REPORT_NOT_READY, 'A draft report can only be generated after the inspection has been submitted.');
     if (!canAccessBranch(user, inspection.branchId)) throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
@@ -44,6 +59,7 @@ export class ReportsService {
   async generate(user: TenantContext, inspectionId: string, meta: RequestMetadata) {
     const inspection = await this.loadForReport(user.organizationId, inspectionId);
     if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+    assertReviewerAssignment(user, inspection.reviewerId, 'generate the official report');
     const outcome = evaluateTransition({ action: InspectionAction.GENERATE_REPORT, currentStatus: inspection.status, userId: user.userId, permissions: user.permissions, inspectorId: inspection.inspectorId, submittedById: null });
     if (!outcome.allowed) throw new BadRequestError(ErrorCode.REPORT_NOT_READY, outcome.reason);
     if (!canAccessBranch(user, inspection.branchId)) throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
@@ -79,15 +95,20 @@ export class ReportsService {
 
   async list(user: TenantContext, query: { page: number; pageSize: number; search?: string }): Promise<PaginatedResult<unknown>> {
     const scope = buildTenantScope(user);
-    const where = { organizationId: scope.organizationId, ...(scope.branchId ? { inspection: { branchId: scope.branchId } } : {}), ...(query.search ? { OR: [{ reportNumber: { contains: query.search, mode: 'insensitive' as const } }, { inspection: { inspectionNumber: { contains: query.search, mode: 'insensitive' as const } } }, { inspection: { loanReference: { contains: query.search, mode: 'insensitive' as const } } }] } : {}) };
+    const inspectionScope = {
+      ...(scope.branchId ? { branchId: scope.branchId } : {}),
+      ...(isReviewer(user) ? { reviewerId: user.userId } : {}),
+    };
+    const where = { organizationId: scope.organizationId, inspection: inspectionScope, ...(query.search ? { OR: [{ reportNumber: { contains: query.search, mode: 'insensitive' as const } }, { inspection: { inspectionNumber: { contains: query.search, mode: 'insensitive' as const } } }, { inspection: { loanReference: { contains: query.search, mode: 'insensitive' as const } } }] } : {}) };
     const [rows, total] = await Promise.all([this.prisma.report.findMany({ where, orderBy: { generatedAt: 'desc' }, skip: (query.page - 1) * query.pageSize, take: query.pageSize, include: { inspection: { select: { id: true, inspectionNumber: true, loanReference: true, submittedAt: true, property: { select: { reference: true, addressLine: true, titleNumber: true, ownerClientName: true, propertyType: true, province: true, district: true, sector: true, cell: true, villageStreet: true } }, inspector: { select: { firstName: true, lastName: true } }, reviewer: { select: { firstName: true, lastName: true } } } }, generatedBy: { select: { firstName: true, lastName: true } } } }), this.prisma.report.count({ where })]);
     return paginate(rows, total, query.page, query.pageSize);
   }
 
   async getDownloadUrl(user: TenantContext, reportId: string, meta: RequestMetadata, disposition: 'inline' | 'attachment' = 'attachment'): Promise<{ url: string; expiresIn: number; reportNumber: string }> {
-    const report = await this.prisma.report.findFirst({ where: { id: reportId, organizationId: user.organizationId }, include: { inspection: { select: { branchId: true, inspectionNumber: true } } } });
+    const report = await this.prisma.report.findFirst({ where: { id: reportId, organizationId: user.organizationId }, include: { inspection: { select: { branchId: true, inspectionNumber: true, reviewerId: true } } } });
     if (!report) throw new NotFoundError(ErrorCode.NOT_FOUND, 'Report not found.');
     if (!canAccessBranch(user, report.inspection.branchId)) throw new ForbiddenError('This report belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
+    assertReviewerAssignment(user, report.inspection.reviewerId, 'download reports');
     if (!report.reportNumber.startsWith('DRF-')) {
       const live = await this.loadForReport(user.organizationId, report.inspectionId);
       if (!live) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
