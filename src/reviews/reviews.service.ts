@@ -331,6 +331,13 @@ export class ReviewsService {
     if (!canAccessBranch(user, inspection.branchId)) {
       throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
     }
+    if (action === InspectionAction.BEGIN_REVIEW) {
+      if (inspection.reviewerId && inspection.reviewerId !== user.userId) {
+        throw new ForbiddenError('This inspection has already been claimed by another reviewer.', ErrorCode.AUTH_FORBIDDEN);
+      }
+    } else if (inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Only the reviewer assigned to this inspection can make review decisions.', ErrorCode.AUTH_FORBIDDEN);
+    }
     if (baseVersion !== undefined && baseVersion < inspection.version) {
       throw new ConflictError(
         ErrorCode.INSPECTION_STALE_VERSION,
@@ -409,8 +416,11 @@ export class ReviewsService {
     }
 
     await this.prisma.runInTransaction(async (tx) => {
-      await tx.inspection.update({
-        where: { id },
+      const claimed = await tx.inspection.updateMany({
+        where: {
+          id,
+          reviewerId: action === InspectionAction.BEGIN_REVIEW ? null : user.userId,
+        },
         data: {
           status: outcome.nextStatus,
           reviewerId: user.userId,
@@ -419,6 +429,12 @@ export class ReviewsService {
           version: { increment: 1 },
         },
       });
+      if (claimed.count !== 1) {
+        throw new ConflictError(
+          ErrorCode.INSPECTION_STALE_VERSION,
+          'This inspection was claimed or reassigned by another user. Reload before continuing.',
+        );
+      }
       if (reason?.trim()) {
         await tx.inspectionComment.create({
           data: {
