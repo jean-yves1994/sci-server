@@ -29,7 +29,7 @@ export class InspectionsController {
     // Inspectors must never be able to widen their visibility by omitting or
     // overriding assignedToMe. The backend is the authority; the web/app
     // clients only provide the preferred UI filter.
-    if (this.isInspector(user)) query.assignedToMe = true;
+    if (this.isInspector(user) && !user.permissions.has('reviews.decide')) query.assignedToMe = true;
     return this.inspections.list(user, query);
   }
 
@@ -213,7 +213,7 @@ export class InspectionsController {
   }
 
   private assertInspectorAccess(user: TenantContext, inspectorId: string | null): void {
-    if (this.isInspector(user) && inspectorId !== user.userId) {
+    if (this.isInspector(user) && !user.permissions.has('reviews.decide') && inspectorId !== user.userId) {
       throw new ForbiddenError(
         'Inspectors can only access inspections assigned to themselves.',
         ErrorCode.AUTH_FORBIDDEN,
