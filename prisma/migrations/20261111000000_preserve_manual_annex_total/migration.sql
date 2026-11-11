@@ -11,7 +11,9 @@ DECLARE
   land_field_id text;
   main_field_id text;
   annex_total_field_id text;
+  annex_count_field_id text;
   total_field_id text;
+  annex_count integer := 0;
   annex_total numeric := 0;
   land_value numeric := 0;
   main_value numeric := 0;
@@ -61,6 +63,12 @@ BEGIN
   WHERE ts."templateId" = template_id AND tf.code = 'ANNEX_TOTAL_VALUE'
   LIMIT 1;
 
+  SELECT tf.id INTO annex_count_field_id
+  FROM template_fields tf
+  JOIN template_sections ts ON ts.id = tf."sectionId"
+  WHERE ts."templateId" = template_id AND tf.code = 'ANNEX_COUNT'
+  LIMIT 1;
+
   SELECT tf.id INTO total_field_id
   FROM template_fields tf
   JOIN template_sections ts ON ts.id = tf."sectionId"
@@ -79,10 +87,18 @@ BEGIN
     WHERE "inspectionId" = NEW."inspectionId" AND "fieldId" = main_field_id;
   END IF;
 
-  IF annex_total_field_id IS NOT NULL THEN
+  IF annex_count_field_id IS NOT NULL THEN
+    SELECT COALESCE("valueNumber", 0)::integer INTO annex_count
+    FROM inspection_values
+    WHERE "inspectionId" = NEW."inspectionId" AND "fieldId" = annex_count_field_id;
+  END IF;
+
+  IF annex_count > 0 AND annex_total_field_id IS NOT NULL THEN
     SELECT COALESCE("valueNumber", 0) INTO annex_total
     FROM inspection_values
     WHERE "inspectionId" = NEW."inspectionId" AND "fieldId" = annex_total_field_id;
+  ELSE
+    annex_total := 0;
   END IF;
 
   IF total_field_id IS NOT NULL THEN
