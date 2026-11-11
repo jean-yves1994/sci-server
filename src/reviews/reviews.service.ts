@@ -149,9 +149,12 @@ export class ReviewsService {
         ErrorCode.AUTH_FORBIDDEN,
       );
     }
-    if (inspection.reviewerId && inspection.reviewerId !== user.userId) {
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (user.permissions.has('reviews.decide') && !isAdmin && inspection.reviewerId !== user.userId) {
       throw new ForbiddenError(
-        'This inspection is assigned to another reviewer.',
+        inspection.reviewerId
+          ? 'This inspection is assigned to another reviewer.'
+          : 'Claim this inspection from the Review queue before opening its review workspace.',
         ErrorCode.AUTH_FORBIDDEN,
       );
     }
