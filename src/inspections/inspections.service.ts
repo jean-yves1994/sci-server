@@ -145,7 +145,7 @@ export class InspectionsService {
     return this.list(user, {
       ...query,
       reviewerId: '__UNCLAIMED__',
-      status: query.status?.length ? query.status : REVIEW_QUEUE_STATUSES,
+      status: REVIEW_QUEUE_STATUSES,
       sortBy: query.sortBy ?? 'submittedAt',
       sortDir: query.sortDir ?? 'asc',
     } as InspectionQueryDto & { reviewerId: string });
