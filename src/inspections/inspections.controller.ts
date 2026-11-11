@@ -39,9 +39,11 @@ export class InspectionsController {
   async findOne(@CurrentUser() user: TenantContext, @Param('id', ParseUUIDPipe) id: string) {
     const inspection = await this.inspections.findOne(user, id) as {
       inspector?: { id?: string } | null;
+      reviewer?: { id?: string } | null;
     };
 
     this.assertInspectorAccess(user, inspection.inspector?.id ?? null);
+    this.assertReviewerAccess(user, inspection.reviewer?.id ?? null);
     return inspection;
   }
 
@@ -52,8 +54,10 @@ export class InspectionsController {
     // Authorise the resource itself before returning its completeness details.
     const inspection = await this.inspections.findOne(user, id) as {
       inspector?: { id?: string } | null;
+      reviewer?: { id?: string } | null;
     };
     this.assertInspectorAccess(user, inspection.inspector?.id ?? null);
+    this.assertReviewerAccess(user, inspection.reviewer?.id ?? null);
     return this.inspections.completeness(user, id);
   }
 
@@ -173,6 +177,23 @@ export class InspectionsController {
     await this.reports.generateDraft(user, id, meta);
     // Preserve the original submit response shape for the inspector app/web clients.
     return inspection;
+  }
+
+  private isAdministrator(user: TenantContext): boolean {
+    return user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+  }
+
+  private assertReviewerAccess(user: TenantContext, reviewerId: string | null): void {
+    if (
+      user.permissions.has('reviews.decide') &&
+      !this.isAdministrator(user) &&
+      reviewerId !== user.userId
+    ) {
+      throw new ForbiddenError(
+        'Reviewers can only access inspections assigned to themselves.',
+        ErrorCode.AUTH_FORBIDDEN,
+      );
+    }
   }
 
   private isInspector(user: TenantContext): boolean {
