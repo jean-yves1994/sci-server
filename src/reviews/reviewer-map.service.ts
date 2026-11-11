@@ -48,6 +48,7 @@ export class ReviewerMapService {
     const previous = await this.prisma.$queryRaw<Array<{ storageKey: string }>>`SELECT storage_key AS "storageKey" FROM reviewer_map_images WHERE inspection_id = ${inspectionId} LIMIT 1`;
 
     const map = await this.prisma.runInTransaction(async (tx) => {
+      await this.lockReviewerOwnership(tx, inspectionId, user.userId);
       const result = await tx.$queryRaw<Array<Record<string, unknown>>>`
         INSERT INTO reviewer_map_images (inspection_id, reviewer_id, storage_key, mime_type, size_bytes, checksum_sha256, created_at, updated_at)
         VALUES (${inspectionId}, ${user.userId}, ${stored.key}, ${detected.mime}, ${stored.sizeBytes}, ${stored.checksumSha256}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -70,6 +71,7 @@ export class ReviewerMapService {
     const rows = await this.prisma.$queryRaw<Array<{ id: string; storageKey: string }>>`SELECT id, storage_key AS "storageKey" FROM reviewer_map_images WHERE inspection_id = ${inspectionId} LIMIT 1`;
     if (!rows[0]) throw new NotFoundError(ErrorCode.NOT_FOUND, 'No reviewer map image is attached.');
     await this.prisma.runInTransaction(async (tx) => {
+      await this.lockReviewerOwnership(tx, inspectionId, user.userId);
       await tx.$executeRaw`DELETE FROM reviewer_map_images WHERE inspection_id = ${inspectionId}`;
       await tx.inspection.update({ where: { id: inspectionId }, data: { version: { increment: 1 } } });
       await this.audit.record({ organizationId: user.organizationId, userId: user.userId, action: 'REVIEWER_MAP_REMOVED', entityType: 'ReviewerMapImage', entityId: rows[0].id, metadata: { inspectionId }, meta }, tx);
@@ -86,6 +88,15 @@ export class ReviewerMapService {
       throw new ForbiddenError('Reviewers can only access map images for inspections assigned to themselves.', ErrorCode.AUTH_FORBIDDEN);
     }
     return inspection;
+  }
+
+  private async lockReviewerOwnership(tx: import('../database/prisma.service').PrismaTransactionClient, inspectionId: string, userId: string) {
+    const rows = await tx.$queryRaw<Array<{ reviewerId: string | null }>>`
+      SELECT "reviewerId" FROM inspections WHERE id = ${inspectionId} FOR UPDATE
+    `;
+    if (!rows[0] || rows[0].reviewerId !== userId) {
+      throw new ForbiddenError('This inspection is no longer assigned to you for review.', ErrorCode.AUTH_FORBIDDEN);
+    }
   }
 
   private async assertEditable(user: TenantContext, inspectionId: string) {
