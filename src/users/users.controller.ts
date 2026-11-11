@@ -28,6 +28,13 @@ export class UsersController {
     return this.usersService.listInspectors(user, branchId);
   }
 
+  @Get('reviewers')
+  @RequirePermissions('inspections.assign')
+  @ApiOperation({ summary: 'Reviewers available for professional review assignment' })
+  reviewers(@CurrentUser() user: TenantContext, @Query('branchId') branchId?: string) {
+    return this.usersService.listReviewers(user, branchId);
+  }
+
   @Get(':id')
   @RequirePermissions('users.read')
   @ApiOperation({ summary: 'Get one user' })
