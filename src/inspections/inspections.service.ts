@@ -389,6 +389,13 @@ export class InspectionsService {
   /** Assigns or reassigns an inspector. Reassignment requires a reason. */
   async assign(user: TenantContext, id: string, dto: AssignInspectionDto, meta: RequestMetadata) {
     const inspection = await this.loadForTransition(user, id);
+    if (
+      user.permissions.has('reviews.decide') &&
+      !isAdmin(user) &&
+      inspection.reviewerId !== user.userId
+    ) {
+      throw new ForbiddenError('Reviewers can only change an inspection assigned to themselves.', ErrorCode.AUTH_FORBIDDEN);
+    }
     const isReassignment =
       Boolean(inspection.inspectorId) && inspection.inspectorId !== dto.inspectorId;
 
