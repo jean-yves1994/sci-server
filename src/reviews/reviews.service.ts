@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '../common/errors/domain.exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { RequestMetadata, TenantContext, canAccessBranch } from '../common/tenant-context';
-import { PrismaService } from '../database/prisma.service';
+import { PrismaService, PrismaTransactionClient } from '../database/prisma.service';
 import { InspectionAction, evaluateTransition } from '../inspections/domain/inspection-state-machine';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReportsService } from '../reports/reports.service';
@@ -562,7 +562,7 @@ export class ReviewsService {
   }
 
   private async lockReviewerOwnership(
-    tx: Parameters<Parameters<PrismaService['runInTransaction']>[0]>[0],
+    tx: PrismaTransactionClient,
     id: string,
     userId: string,
   ): Promise<void> {
