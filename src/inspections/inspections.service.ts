@@ -407,13 +407,34 @@ export class InspectionsService {
     }
 
     const inspector = await this.assertInspector(user, dto.inspectorId);
+    let assignedReviewerId = inspection.reviewerId;
+    if (dto.reviewerId !== undefined) {
+      if (!isAdmin(user)) {
+        throw new ForbiddenError('Only administrators can assign or reassign professional reviewers.', ErrorCode.AUTH_FORBIDDEN);
+      }
+      const reviewer = await this.prisma.user.findFirst({
+        where: {
+          id: dto.reviewerId,
+          organizationId: user.organizationId,
+          deletedAt: null,
+          status: 'ACTIVE',
+          OR: [{ branchId: inspection.branchId }, { branchScope: 'ALL_BRANCHES' }],
+          userRoles: {
+            some: { role: { rolePermissions: { some: { permission: { code: 'reviews.decide' } } } } },
+          },
+        },
+        select: { id: true },
+      });
+      if (!reviewer) throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Select an active reviewer with access to the inspection branch.');
+      assignedReviewerId = reviewer.id;
+    }
 
     await this.prisma.runInTransaction(async (tx) => {
       await tx.inspection.update({
         where: { id },
         data: {
           inspectorId: inspector.id,
-          reviewerId: dto.reviewerId ?? inspection.reviewerId,
+          reviewerId: assignedReviewerId,
           status: outcome.nextStatus,
           priority: dto.priority ?? undefined,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
