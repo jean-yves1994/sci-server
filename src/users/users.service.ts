@@ -271,6 +271,26 @@ export class UsersService {
     });
   }
 
+  /** Reviewers eligible to own professional review assignments. */
+  listReviewers(user: TenantContext, branchId?: string) {
+    return this.prisma.user.findMany({
+      where: {
+        organizationId: user.organizationId,
+        deletedAt: null,
+        status: 'ACTIVE',
+        ...(user.branchScope === 'OWN_BRANCH' ? { OR: [{ branchId: { in: user.accessibleBranchIds } }, { branchScope: 'ALL_BRANCHES' }] } : {}),
+        ...(branchId ? { OR: [{ branchId }, { branchScope: 'ALL_BRANCHES' }] } : {}),
+        userRoles: {
+          some: {
+            role: { rolePermissions: { some: { permission: { code: 'reviews.decide' } } } },
+          },
+        },
+      },
+      select: { id: true, firstName: true, lastName: true, email: true, branch: { select: { id: true, code: true } } },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+  }
+
   private async resolveRoles(organizationId: string, codes: string[]) {
     const unique = [...new Set(codes.map((c) => c.trim().toUpperCase()))];
     const roles = await this.prisma.role.findMany({
