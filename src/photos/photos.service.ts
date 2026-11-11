@@ -156,7 +156,7 @@ export class PhotosService {
   async list(user: TenantContext, inspectionId: string) {
     const inspection = await this.prisma.inspection.findFirst({
       where: { id: inspectionId, organizationId: user.organizationId, deletedAt: null },
-      select: { id: true, branchId: true },
+      select: { id: true, branchId: true, reviewerId: true },
     });
 
     if (!inspection) {
@@ -167,6 +167,10 @@ export class PhotosService {
         'This inspection belongs to a branch you do not have access to.',
         ErrorCode.AUTH_FORBIDDEN,
       );
+    }
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (user.permissions.has('reviews.decide') && !isAdmin && inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Reviewers can only view photographs for inspections assigned to themselves.', ErrorCode.AUTH_FORBIDDEN);
     }
 
     const photos = await this.prisma.inspectionPhoto.findMany({
