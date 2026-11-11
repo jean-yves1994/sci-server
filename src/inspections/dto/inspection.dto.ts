@@ -16,6 +16,11 @@ export class CreateInspectionDto {
   @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(2000) notes?: string;
 }
 
+export class ReviewerAssignmentDto {
+  @ApiProperty() @IsUUID() reviewerId: string;
+  @ApiProperty({ description: 'Reason for assigning or reassigning the reviewer.' }) @IsString() @IsNotEmpty() @MaxLength(1000) reason: string;
+}
+
 export class AssignInspectionDto {
   @ApiProperty() @IsUUID() inspectorId: string;
   @ApiPropertyOptional() @IsUUID() @IsOptional() reviewerId?: string;
