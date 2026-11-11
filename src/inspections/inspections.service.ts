@@ -27,6 +27,7 @@ import { PrismaService, PrismaTransactionClient } from '../database/prisma.servi
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   AssignInspectionDto,
+  ReviewerAssignmentDto,
   CaptureLocationDto,
   CreateInspectionDto,
   InspectionQueryDto,
@@ -464,6 +465,85 @@ export class InspectionsService {
         },
         tx,
       );
+    });
+
+    return this.findOne(user, id);
+  }
+
+  async assignReviewer(user: TenantContext, id: string, dto: ReviewerAssignmentDto, meta: RequestMetadata) {
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (!isAdmin || !user.permissions.has('inspections.assign')) {
+      throw new ForbiddenError('Only administrators can assign or reassign professional reviewers.', ErrorCode.AUTH_FORBIDDEN);
+    }
+
+    const inspection = await this.prisma.inspection.findFirst({
+      where: { id, organizationId: user.organizationId, deletedAt: null },
+      select: { id: true, branchId: true, status: true, reviewerId: true, inspectionNumber: true, version: true },
+    });
+    if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
+    if (!canAccessBranch(user, inspection.branchId)) {
+      throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
+    }
+    if ([InspectionStatus.APPROVED, InspectionStatus.REPORT_GENERATED, InspectionStatus.REJECTED, InspectionStatus.ARCHIVED].includes(inspection.status)) {
+      throw new BadRequestError(ErrorCode.INSPECTION_INVALID_TRANSITION, 'A completed or rejected inspection cannot be reassigned for review.');
+    }
+
+    const reviewer = await this.prisma.user.findFirst({
+      where: {
+        id: dto.reviewerId,
+        organizationId: user.organizationId,
+        deletedAt: null,
+        status: 'ACTIVE',
+        OR: [{ branchId: inspection.branchId }, { branchScope: 'ALL_BRANCHES' }],
+        userRoles: {
+          some: { role: { rolePermissions: { some: { permission: { code: 'reviews.decide' } } } } },
+        },
+      },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!reviewer) {
+      throw new BadRequestError(ErrorCode.VALIDATION_ERROR, 'Select an active reviewer with access to the inspection branch.');
+    }
+
+    await this.prisma.runInTransaction(async (tx) => {
+      const changed = await tx.inspection.updateMany({
+        where: { id, version: inspection.version, reviewerId: inspection.reviewerId },
+        data: { reviewerId: reviewer.id, version: { increment: 1 } },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictError(ErrorCode.INSPECTION_STALE_VERSION, 'The inspection assignment changed. Reload and try again.');
+      }
+      if (inspection.reviewerId && inspection.reviewerId !== reviewer.id) {
+        await this.notifications.create({
+          userId: inspection.reviewerId,
+          type: 'ASSIGNMENT_CHANGED',
+          title: 'Review assignment changed',
+          message: `${inspection.inspectionNumber} is no longer assigned to you for review.`,
+          entityType: 'Inspection',
+          entityId: id,
+        }, tx);
+      }
+      if (inspection.reviewerId !== reviewer.id) {
+        await this.notifications.create({
+          userId: reviewer.id,
+          type: 'ASSIGNMENT_CHANGED',
+          title: 'Inspection assigned for review',
+          message: `${inspection.inspectionNumber} has been assigned to you for professional review.`,
+          entityType: 'Inspection',
+          entityId: id,
+        }, tx);
+      }
+      await this.audit.record({
+        organizationId: user.organizationId,
+        userId: user.userId,
+        action: inspection.reviewerId === reviewer.id ? 'INSPECTION_REVIEWER_ASSIGNMENT_CONFIRMED' : 'INSPECTION_REVIEWER_REASSIGNED',
+        entityType: 'Inspection',
+        entityId: id,
+        previousValue: { reviewerId: inspection.reviewerId },
+        newValue: { reviewerId: reviewer.id },
+        metadata: { reason: dto.reason.trim() },
+        meta,
+      }, tx);
     });
 
     return this.findOne(user, id);
