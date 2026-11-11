@@ -149,6 +149,12 @@ export class ReviewsService {
         ErrorCode.AUTH_FORBIDDEN,
       );
     }
+    if (inspection.reviewerId && inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError(
+        'This inspection is assigned to another reviewer.',
+        ErrorCode.AUTH_FORBIDDEN,
+      );
+    }
 
     return inspection;
   }
@@ -176,9 +182,9 @@ export class ReviewsService {
   private async assertReviewerCanEdit(user: TenantContext, id: string, baseVersion?: number) {
     const inspection = await this.getReviewable(user, id);
 
-    if (inspection.reviewerId && inspection.reviewerId !== user.userId) {
+    if (inspection.reviewerId !== user.userId) {
       throw new ForbiddenError(
-        'Only the reviewer who claimed this inspection can modify the professional review.',
+        'Claim this inspection before editing. Only its assigned reviewer can make review changes.',
         ErrorCode.AUTH_FORBIDDEN,
       );
     }
