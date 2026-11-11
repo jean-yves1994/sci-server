@@ -278,8 +278,12 @@ export class UsersService {
         organizationId: user.organizationId,
         deletedAt: null,
         status: 'ACTIVE',
-        ...(user.branchScope === 'OWN_BRANCH' ? { OR: [{ branchId: { in: user.accessibleBranchIds } }, { branchScope: 'ALL_BRANCHES' }] } : {}),
-        ...(branchId ? { OR: [{ branchId }, { branchScope: 'ALL_BRANCHES' }] } : {}),
+        AND: [
+          ...(user.branchScope === 'OWN_BRANCH'
+            ? [{ OR: [{ branchId: { in: user.accessibleBranchIds } }, { branchScope: 'ALL_BRANCHES' as const }] }]
+            : []),
+          ...(branchId ? [{ OR: [{ branchId }, { branchScope: 'ALL_BRANCHES' as const }] }] : []),
+        ],
         userRoles: {
           some: {
             role: { rolePermissions: { some: { permission: { code: 'reviews.decide' } } } },
