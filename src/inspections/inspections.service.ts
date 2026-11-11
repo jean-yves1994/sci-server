@@ -43,6 +43,10 @@ import {
   isEditable,
 } from './domain/inspection-state-machine';
 
+function isAdmin(user: TenantContext): boolean {
+  return user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+}
+
 @Injectable()
 export class InspectionsService {
   private readonly logger = new Logger(InspectionsService.name);
@@ -67,7 +71,11 @@ export class InspectionsService {
       ...(query.status?.length ? { status: { in: query.status } } : {}),
       ...(query.branchId ? { branchId: query.branchId } : {}),
       ...(query.inspectorId ? { inspectorId: query.inspectorId } : {}),
-      ...(query.reviewerId ? { reviewerId: query.reviewerId } : {}),
+      ...(isAdmin(user)
+        ? (query.reviewerId ? { reviewerId: query.reviewerId } : {})
+        : user.permissions.has('reviews.decide')
+          ? { reviewerId: user.userId }
+          : (query.reviewerId ? { reviewerId: query.reviewerId } : {})),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.assignedToMe ? { inspectorId: user.userId } : {}),
       ...(query.propertyType ? { property: { propertyType: query.propertyType } } : {}),
@@ -129,12 +137,15 @@ export class InspectionsService {
   }
 
   reviewQueue(user: TenantContext, query: InspectionQueryDto): Promise<PaginatedResult<unknown>> {
+    // The review queue is a claim pool: once any reviewer owns an inspection,
+    // it disappears for everyone else, including administrators.
     return this.list(user, {
       ...query,
+      reviewerId: '__UNCLAIMED__',
       status: query.status?.length ? query.status : REVIEW_QUEUE_STATUSES,
       sortBy: query.sortBy ?? 'submittedAt',
       sortDir: query.sortDir ?? 'asc',
-    });
+    } as InspectionQueryDto & { reviewerId: string });
   }
 
   async findOne(user: TenantContext, id: string) {
