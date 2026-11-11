@@ -518,11 +518,15 @@ export class ReviewsService {
   async addComment(user: TenantContext, id: string, dto: CommentDto, meta: RequestMetadata) {
     const inspection = await this.prisma.inspection.findFirst({
       where: { id, organizationId: user.organizationId, deletedAt: null },
-      select: { id: true, branchId: true },
+      select: { id: true, branchId: true, reviewerId: true },
     });
     if (!inspection) throw new NotFoundError(ErrorCode.INSPECTION_NOT_FOUND, 'Inspection not found.');
     if (!canAccessBranch(user, inspection.branchId)) {
       throw new ForbiddenError('This inspection belongs to a branch you do not have access to.', ErrorCode.AUTH_FORBIDDEN);
+    }
+    const isAdmin = user.roles.some((role) => ['ADMIN', 'ADMINISTRATOR'].includes(role.trim().toUpperCase()));
+    if (user.permissions.has('reviews.decide') && !isAdmin && inspection.reviewerId !== user.userId) {
+      throw new ForbiddenError('Only the assigned reviewer can add review comments to this inspection.', ErrorCode.AUTH_FORBIDDEN);
     }
     const comment = await this.prisma.inspectionComment.create({
       data: {
