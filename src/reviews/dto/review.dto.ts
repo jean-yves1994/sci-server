@@ -81,7 +81,7 @@ export class ReviewerStatusInformationDto {
   @IsOptional() @IsIn(['UNDER_PROCESS', 'NOT_UNDER_PROCESS'])
   processStatus?: 'UNDER_PROCESS' | 'NOT_UNDER_PROCESS' | null;
 
-  @ApiPropertyOptional({ description: 'Remaining lease term in whole months; null if not applicable.' })
+  @ApiPropertyOptional({ description: 'Remaining lease term stored as whole months (converted from reviewer-entered years); null if not applicable.' })
   @Type(() => Number) @IsInt() @Min(0) @IsOptional()
   remainingLeaseTermMonths?: number | null;
 
