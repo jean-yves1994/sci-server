@@ -131,7 +131,7 @@ export class ReportRenderer {
       ['Mortgage status', data.statusInformation.mortgageStatus ? this.statusLabel(data.statusInformation.mortgageStatus) : null, data.statusInformation.mortgageStatus === 'NOT_UNDER_MORTGAGE'],
       ['Restriction status', data.statusInformation.restrictionStatus ? this.statusLabel(data.statusInformation.restrictionStatus) : null, data.statusInformation.restrictionStatus === 'NOT_UNDER_RESTRICTION'],
       ['Process status', data.statusInformation.processStatus ? this.statusLabel(data.statusInformation.processStatus) : null, data.statusInformation.processStatus === 'NOT_UNDER_PROCESS'],
-      ['Remaining lease term', data.statusInformation.remainingLeaseTermMonths !== null ? `${data.statusInformation.remainingLeaseTermMonths.toLocaleString('en-US')} months` : null, false],
+      ['Remaining lease term', data.statusInformation.remainingLeaseTermMonths !== null ? `${(data.statusInformation.remainingLeaseTermMonths / 12).toLocaleString('en-US', { maximumFractionDigits: 2 })} years` : null, false],
     ];
     for (const [label, value, notUnderStatus] of rows) {
       this.ensure(doc, 22);
