@@ -144,9 +144,22 @@ export class ReportsService {
 
   private toReportData(inspection: NonNullable<Awaited<ReturnType<ReportsService['loadForReport']>>>, reportNumber: string, version: number, generatedByName: string): ReportData {
     const location = inspection.locations[0];
-    const fieldValues = inspection.values.map(v => ({ section: v.field.section.name, sortOrder: v.field.sortOrder, label: v.field.label, value: this.stringifyValue({ ...v, field: { type: v.field.type, label: v.field.label } }) })).filter(e => e.value !== '').sort((a, b) => this.reportSectionOrder(a.section) - this.reportSectionOrder(b.section) || a.section.localeCompare(b.section) || this.reportFieldOrder(a.section, a.label) - this.reportFieldOrder(b.section, b.label) || a.sortOrder - b.sortOrder);
-    const address = [inspection.property.villageStreet, inspection.property.cell, inspection.property.sector, inspection.property.district, inspection.property.province].filter((v): v is string => Boolean(v?.trim())).join(', ');
     const codeValues = new Map(inspection.values.map(v => [v.field.code, this.rawValue(v)]));
+    const fieldValues = inspection.values.map(v => {
+      const rawValue = this.rawValue(v);
+      const numericValue = rawValue == null || rawValue === '' ? null : Number(rawValue);
+      const isNoAnnexValue = v.field.code === 'ANNEX_TOTAL_VALUE' &&
+        numericValue !== null && Number.isFinite(numericValue) && numericValue <= 0;
+      return {
+        section: v.field.section.name,
+        sortOrder: v.field.sortOrder,
+        label: v.field.label,
+        value: isNoAnnexValue
+          ? 'This building has no annexes'
+          : this.stringifyValue({ ...v, field: { type: v.field.type, label: v.field.label } }),
+      };
+    }).filter(e => e.value !== '').sort((a, b) => this.reportSectionOrder(a.section) - this.reportSectionOrder(b.section) || a.section.localeCompare(b.section) || this.reportFieldOrder(a.section, a.label) - this.reportFieldOrder(b.section, b.label) || a.sortOrder - b.sortOrder);
+    const address = [inspection.property.villageStreet, inspection.property.cell, inspection.property.sector, inspection.property.district, inspection.property.province].filter((v): v is string => Boolean(v?.trim())).join(', ');
     const improved = String(codeValues.get('PROPERTY_STATUS') ?? '').toUpperCase() === 'IMPROVED';
     const rv = inspection.reviewerValuation;
     const currency = rv?.currency ?? 'RWF';
