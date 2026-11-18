@@ -63,10 +63,11 @@ export interface PasswordPolicyResult { valid: boolean; failures: string[] }
  */
 export function checkPasswordPolicy(password: string): PasswordPolicyResult {
   const failures: string[] = [];
-  if (password.length < 12) failures.push('be at least 12 characters long');
+  if (password.length < 8) failures.push('be at least 8 characters long');
   if (!/[a-z]/.test(password)) failures.push('include a lowercase letter');
   if (!/[A-Z]/.test(password)) failures.push('include an uppercase letter');
   if (!/\d/.test(password)) failures.push('include a digit');
+  if (!/[^A-Za-z0-9]/.test(password)) failures.push('include a symbol');
 
   const common = ['password', '12345678', 'qwerty', 'letmein', 'admin123', 'welcome1'];
   if (common.some((entry) => password.toLowerCase().includes(entry))) {
